@@ -32,7 +32,7 @@ function renderEquityCurve(canvasId, trades, startBal = 0, valElId = null) {
       el.style.color = diff >= 0 ? 'var(--green)' : 'var(--red)';
     }
   }
-  new Chart(canvas.getContext('2d'), {
+  const chart = new Chart(canvas.getContext('2d'), {
     type: 'line',
     data: { labels, datasets: [{ data, borderColor: 'transparent', backgroundColor: 'transparent', borderWidth: 0, pointRadius: 0, pointHoverRadius: 5, pointHoverBackgroundColor: '#4f8ef7', fill: false, tension: 0.3 }] },
     options: {
@@ -40,7 +40,12 @@ function renderEquityCurve(canvasId, trades, startBal = 0, valElId = null) {
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
-        tooltip: { ...CHART_DEFAULTS.tooltip, callbacks: { label: ctx => { const v = ctx.parsed.y; const diff = v - startBal; return 'Balance: $' + v.toLocaleString('en-US',{minimumFractionDigits:2}) + (startBal ? ' (' + (diff>=0?'+':'') + diff.toFixed(2) + ')' : ''); } } }
+        tooltip: { ...CHART_DEFAULTS.tooltip, callbacks: { label: ctx => { const v = ctx.parsed.y; const diff = v - startBal; return 'Balance: $' + v.toLocaleString('en-US',{minimumFractionDigits:2}) + (startBal ? ' (' + (diff>=0?'+':'') + diff.toFixed(2) + ')' : ''); } } },
+        zoom: {
+          pan:  { enabled: true, mode: 'x', threshold: 5 },
+          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+          limits: { x: { min: 'original', max: 'original' } }
+        }
       },
       scales: {
         x: { ticks: { ...CHART_DEFAULTS.ticks, maxTicksLimit: 8 }, grid: CHART_DEFAULTS.grid },
@@ -90,6 +95,12 @@ function renderEquityCurve(canvasId, trades, startBal = 0, valElId = null) {
       }
     }]
   });
+  window._eqChart = chart;
+  canvas.ondblclick = () => { if(window._eqChart?.resetZoom) window._eqChart.resetZoom(); };
+}
+
+function resetEqZoom() {
+  if (window._eqChart?.resetZoom) window._eqChart.resetZoom();
 }
 
 // Daily P&L bar chart

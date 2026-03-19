@@ -119,8 +119,11 @@ function renderDashboard(trades) {
   <!-- Equity curve -->
   <div class="chart-card mb-4">
     <div class="chart-card-header">
-      <div><div class="chart-card-title">Equity Curve</div><div class="chart-card-sub">Cumulative P&L over time</div></div>
-      <span id="eqValBadge" style="font-family:var(--f-mono);font-size:.82rem;font-weight:700"></span>
+      <div><div class="chart-card-title">Equity Curve</div><div class="chart-card-sub">Scroll/pinch to zoom · drag to pan · double-tap to reset</div></div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="eqValBadge" style="font-family:var(--f-mono);font-size:.82rem;font-weight:700"></span>
+        <button class="btn-sm btn-outline-sm" onclick="resetEqZoom()" style="font-size:.6rem;padding:3px 8px">Reset</button>
+      </div>
     </div>
     <div class="chart-body" style="height:200px"><canvas id="eqChart"></canvas></div>
   </div>
