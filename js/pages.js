@@ -1014,46 +1014,31 @@ function clearJournalImg() {
 
 async function saveJournalEntry() {
   if (!currentUser) { showToast('Sign in first', 'error'); return; }
+
   const date       = document.getElementById('jDate')?.value?.trim();
   const instrument = document.getElementById('jInstrument')?.value?.trim();
   const result     = document.getElementById('jResult')?.value?.trim();
   if (!date || !instrument || !result) {
     showToast('Date, instrument and result are required', 'error'); return;
   }
-  const emotion    = activeJournalEmotions[activeFirm] || '';
-  const reasonVal  = document.getElementById('jReason')?.value  || '';
-  const wellVal    = document.getElementById('jWell')?.value    || '';
-  const improveVal = document.getElementById('jImprove')?.value || '';
 
-  // Get selected firms
+  const emotion    = activeJournalEmotions[activeFirm] || '';
+  const reasonVal  = document.getElementById('jReason')?.value   || '';
+  const wellVal    = document.getElementById('jWell')?.value     || '';
+  const improveVal = document.getElementById('jImprove')?.value  || '';
+
   const selectedFirms = getSelectedJFirms();
   const firmsToSave   = selectedFirms.length > 0
     ? selectedFirms
     : [activeFirm === 'All' ? 'Other' : activeFirm];
 
-  // Update save button
   const saveBtn = document.getElementById('saveJournalBtn');
   if (saveBtn) { saveBtn.textContent = '⏳ Saving…'; saveBtn.disabled = true; }
 
   let supabaseSaved = 0;
   let localSaved    = 0;
-  let lastErr       = null;
 
   for (const firmVal of firmsToSave) {
-    // Full entry payload matching the SQL table we created
-    const entry = {
-      user_id:          currentUser.id,
-      date:             date,
-      instrument:       instrument,
-      result:           result,
-      emotion:          emotion,
-      reasoning:        reasonVal,
-      went_well:        wellVal,
-      improve:          improveVal,
-      account_provider: firmVal
-    };
-
-    // Minimal insert — only columns defined in our SQL schema
     const payload = {
       user_id:          currentUser.id,
       date:             date,
@@ -1066,42 +1051,29 @@ async function saveJournalEntry() {
       account_provider: firmVal
     };
 
-    // Use plain insert WITHOUT .select() — avoids 400 on RLS-restricted returns
     const { error } = await sb.from('journal_entries').insert(payload);
 
     if (!error) {
       supabaseSaved++;
     } else {
-      // Log the full error for debugging
-      console.error('Journal save failed:', JSON.stringify(error), 'Code:', error.code, 'Message:', error.message, 'Details:', error.details, 'Hint:', error.hint);
-      lastErr = error;
+      console.error('Save error:', error.code, error.message, error.details, error.hint);
 
-      // If it's specifically the account_provider column missing, retry without it
-      if (error.code === '42703' || (error.message||'').includes('account_provider')) {
+      // Try without account_provider if that column is the issue
+      if ((error.code === '42703') || (error.message||'').includes('account_provider')) {
         const { error: e2 } = await sb.from('journal_entries').insert({
           user_id: currentUser.id, date, instrument, result, emotion,
           reasoning: reasonVal, went_well: wellVal, improve: improveVal
         });
-        if (!e2) {
-          supabaseSaved++;
-          lastErr = null;
-        } else {
-          lastErr = e2;
+        if (!e2) { supabaseSaved++; }
+        else {
+          console.error('Retry error:', e2.code, e2.message);
+          // Save locally as last resort
+          _saveLocalJournal({ date, instrument, result, emotion, reasoning: reasonVal, went_well: wellVal, improve: improveVal, account_provider: firmVal });
+          localSaved++;
         }
-      }
-
-      // If STILL failed — save locally as last resort
-      if (lastErr) {
-        const localJournal = JSON.parse(localStorage.getItem('ts_local_journal') || '[]');
-        localJournal.unshift({
-          id: 'local_' + Date.now() + '_' + firmVal,
-          date, instrument, result, emotion,
-          reasoning: reasonVal, went_well: wellVal, improve: improveVal,
-          account_provider: firmVal,
-          created_at: new Date().toISOString(),
-          _local: true
-        });
-        try { localStorage.setItem('ts_local_journal', JSON.stringify(localJournal)); localSaved++; } catch(_) {}
+      } else {
+        _saveLocalJournal({ date, instrument, result, emotion, reasoning: reasonVal, went_well: wellVal, improve: improveVal, account_provider: firmVal });
+        localSaved++;
       }
     }
 
@@ -1110,42 +1082,40 @@ async function saveJournalEntry() {
 
   if (saveBtn) { saveBtn.textContent = '💾 Save Journal Entry'; saveBtn.disabled = false; }
 
-  const total = supabaseSaved + localSaved;
-  if (total === 0) {
-    const errDetail = lastErr ? `${lastErr.message || ''} (code: ${lastErr.code || 'unknown'})` : 'Unknown error';
-    showToast('Save failed: ' + errDetail, 'error');
-    console.error('Final save error:', lastErr);
+  if (supabaseSaved === 0 && localSaved === 0) {
+    showToast('Save failed completely — check console for error', 'error');
     return;
   }
 
-  let msg = '';
-  if (supabaseSaved > 0 && firmsToSave.length > 1) {
-    msg = `✅ Saved to ${firmsToSave.length} firms (synced across devices)`;
-  } else if (supabaseSaved > 0) {
-    msg = `✅ Saved to ${firmsToSave[0]} — synced across all devices`;
+  if (supabaseSaved > 0) {
+    const msg = firmsToSave.length > 1
+      ? `✅ Saved to ${firmsToSave.length} firms — synced across all devices`
+      : `✅ Saved to ${firmsToSave[0]} — synced across all devices`;
+    showToast(msg, 'success');
   } else {
-    msg = `⚠️ Saved locally only (${localSaved} firm${localSaved>1?'s':''}). Run SQL in Help to sync across devices.`;
-    showToast(msg, 'error');
-    // Still continue to clear the form
+    showToast(`⚠️ Saved locally only on this device (${localSaved} firm${localSaved>1?'s':''}). Supabase save failed — check console.`, 'error');
   }
-  if (supabaseSaved > 0) showToast(msg, 'success');
-  // Store image locally if provided
+
+  // Save screenshot locally
   if (journalImgData) {
-    const imgKey = 'ts_jimg_' + date + '_' + instrument.replace(/\s/g,'');
-    try { localStorage.setItem(imgKey, journalImgData); } catch(e) { /* storage full */ }
+    const imgKey = 'ts_jimg_' + date + '_' + instrument.replace(/\s/g, '');
+    try { localStorage.setItem(imgKey, journalImgData); } catch(_) {}
     clearJournalImg();
   }
-  ['jReason','jWell','jImprove','jResult','jInstrument'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+
+  // Reset form
+  ['jReason','jWell','jImprove','jResult','jInstrument'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
   activeJournalEmotions[activeFirm] = '';
-  journalFormState = { open: false, date:'', instrument:'', result:'', emotion:'', reason:'', well:'', improve:'' };
+  journalFormState = { open:false, date:'', instrument:'', result:'', emotion:'', reason:'', well:'', improve:'' };
   document.querySelectorAll('.emotion-btn').forEach(b => b.classList.remove('selected'));
-  // Reset firm checkboxes
   ['Deriv','FTMO','The5ers','Other'].forEach(f => {
-    const cb = document.getElementById('jfirm_' + f);
+    const cb    = document.getElementById('jfirm_' + f);
     const label = document.getElementById('jfirm_label_' + f);
-    const tick = document.getElementById('jfirm_check_' + f);
-    const txt  = document.getElementById('jfirm_txt_'   + f);
-    if (cb) cb.checked = false;
+    const tick  = document.getElementById('jfirm_check_' + f);
+    const txt   = document.getElementById('jfirm_txt_'   + f);
+    if (cb)    cb.checked = false;
     if (label) { label.style.background='var(--surface2)'; label.style.borderColor='var(--border)'; }
     if (tick)  { tick.textContent=''; tick.style.background='var(--bg)'; tick.style.borderColor='var(--border2)'; }
     if (txt)   { txt.style.color='var(--text-3)'; }
@@ -1153,6 +1123,20 @@ async function saveJournalEntry() {
   closeJournalModal();
   loadJournalEntries();
 }
+
+// Helper: save to localStorage
+function _saveLocalJournal(entry) {
+  const localJournal = JSON.parse(localStorage.getItem('ts_local_journal') || '[]');
+  localJournal.unshift({
+    id: 'local_' + Date.now() + '_' + (entry.account_provider||''),
+    ...entry,
+    created_at: new Date().toISOString(),
+    _local: true
+  });
+  try { localStorage.setItem('ts_local_journal', JSON.stringify(localJournal)); } catch(_) {}
+}
+
+
 async function loadJournalEntries() {
   if (!currentUser) return;
   const firmMap = JSON.parse(localStorage.getItem('ts_jfirm') || '{}');
