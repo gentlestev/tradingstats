@@ -67,6 +67,10 @@ function onLogout() {
 
 // ── Navigation ──
 function navTo(page) {
+  // Save journal form state before leaving journal page
+  if (activePage === 'journal' && typeof saveJournalFormState === 'function') {
+    saveJournalFormState();
+  }
   activePage = page;
   localStorage.setItem('ts_page', page);
   renderPage(page);

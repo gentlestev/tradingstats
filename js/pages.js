@@ -521,11 +521,40 @@ function renderAnalysis(trades) {
 let activeJournalFilter = 'all';
 let activeJournalEmotions = {};
 
+// Global journal form state — survives tab switches
+let journalFormState = { open: false, date: '', instrument: '', result: '', emotion: '', reason: '', well: '', improve: '' };
+
+function saveJournalFormState() {
+  journalFormState.open       = document.getElementById('newEntryForm')?.style.display !== 'none';
+  journalFormState.date       = document.getElementById('jDate')?.value || '';
+  journalFormState.instrument = document.getElementById('jInstrument')?.value || '';
+  journalFormState.result     = document.getElementById('jResult')?.value || '';
+  journalFormState.reason     = document.getElementById('jReason')?.value || '';
+  journalFormState.well       = document.getElementById('jWell')?.value || '';
+  journalFormState.improve    = document.getElementById('jImprove')?.value || '';
+  journalFormState.emotion    = activeJournalEmotions[activeFirm] || '';
+}
+
+function restoreJournalFormState() {
+  if (!journalFormState.open) return;
+  const form = document.getElementById('newEntryForm');
+  const btn  = document.getElementById('newEntryBtn');
+  if (form) form.style.display = 'block';
+  if (btn)  btn.textContent = '✕ Cancel';
+  const fields = { jDate: 'date', jInstrument: 'instrument', jResult: 'result', jReason: 'reason', jWell: 'well', jImprove: 'improve' };
+  Object.entries(fields).forEach(([id, key]) => { const el = document.getElementById(id); if (el && journalFormState[key]) el.value = journalFormState[key]; });
+  if (journalFormState.emotion) {
+    activeJournalEmotions[activeFirm] = journalFormState.emotion;
+    document.querySelectorAll('.emotion-btn').forEach(b => { if (b.textContent.trim() === journalFormState.emotion.trim()) b.classList.add('selected'); });
+  }
+}
+
 function renderJournal() {
+  saveJournalFormState(); // save before any re-render
   const c = document.getElementById('pageContent');
   const firmTrades = getTradesForFirm(activeFirm);
   const instruments = [...new Set(firmTrades.map(t => t.instrument).filter(Boolean))];
-  const instOptions = `<option value="">Select…</option>` + instruments.map(i => `<option>${i}</option>`).join('') + `<option>Other</option>`;
+  const instOptions = `<option value="" style="background:#131c28;color:#e8edf5">Select…</option>` + instruments.map(i => `<option style="background:#131c28;color:#e8edf5">${i}</option>`).join('') + `<option style="background:#131c28;color:#e8edf5">Other</option>`;
   c.innerHTML = `
   <div class="section-header mb-4">
     <div><div class="section-title">Trading Journal</div><div class="section-sub">Document your trades and mindset</div></div>
@@ -539,7 +568,7 @@ function renderJournal() {
       <div class="chart-body">
         <div class="col-3 mb-4" style="gap:12px">
           <div class="field-group"><label class="field-label">Date</label><input type="date" class="field-input" id="jDate"/></div>
-          <div class="field-group"><label class="field-label">Instrument</label><select class="field-input" id="jInstrument">${instOptions}</select></div>
+          <div class="field-group"><label class="field-label">Instrument</label><select class="field-input" id="jInstrument" style="background:var(--bg);color:var(--text)">${instOptions}</select></div>
           <div class="field-group"><label class="field-label">Result</label><select class="field-input" id="jResult"><option value="">Select…</option><option>Win</option><option>Loss</option><option>Break Even</option></select></div>
         </div>
         <div class="field-group mb-4"><label class="field-label">How were you feeling before this trade?</label>
@@ -553,6 +582,38 @@ function renderJournal() {
           <div class="field-group"><label class="field-label">Why I Entered</label><textarea class="field-input field-textarea" id="jReason" placeholder="Setup, confluences…" style="min-height:80px"></textarea></div>
           <div class="field-group"><label class="field-label">What Went Well</label><textarea class="field-input field-textarea" id="jWell" placeholder="Discipline, execution…" style="min-height:80px"></textarea></div>
           <div class="field-group"><label class="field-label">What To Improve</label><textarea class="field-input field-textarea" id="jImprove" placeholder="Mistakes, lessons…" style="min-height:80px"></textarea></div>
+        </div>
+        <!-- Screenshot upload -->
+        <div class="field-group mb-4">
+          <label class="field-label">Trade Screenshot (optional)</label>
+          <div id="jImgDrop" style="border:2px dashed var(--border2);border-radius:8px;padding:18px;text-align:center;cursor:pointer;transition:all .2s"
+            onclick="document.getElementById('jImgInput').click()"
+            ondragover="event.preventDefault();this.style.borderColor='var(--brand)'"
+            ondragleave="this.style.borderColor='var(--border2)'"
+            ondrop="handleJournalImgDrop(event)">
+            <div id="jImgPreview" style="display:none;margin-bottom:8px">
+              <img id="jImgThumb" style="max-height:120px;border-radius:6px;max-width:100%" alt="preview"/>
+            </div>
+            <div id="jImgLabel" style="font-size:.75rem;color:var(--text-3)">📷 Drop screenshot or click to upload</div>
+          </div>
+          <input type="file" id="jImgInput" accept="image/*" style="display:none" onchange="handleJournalImgSelect(this.files)"/>
+          <button id="jImgClear" style="display:none;margin-top:6px;background:none;border:none;color:var(--red);font-size:.7rem;cursor:pointer" onclick="clearJournalImg()">✕ Remove image</button>
+        </div>
+        <!-- Screenshot upload -->
+        <div class="field-group" style="margin-bottom:14px">
+          <label class="field-label">Trade Screenshot (optional)</label>
+          <div id="jImgDrop" style="border:2px dashed var(--border2);border-radius:8px;padding:18px;text-align:center;cursor:pointer;transition:all .2s"
+            onclick="document.getElementById('jImgInput').click()"
+            ondragover="event.preventDefault();this.style.borderColor='var(--brand)'"
+            ondragleave="this.style.borderColor='var(--border2)'"
+            ondrop="handleJournalImgDrop(event)">
+            <div id="jImgPreview" style="display:none;margin-bottom:8px">
+              <img id="jImgThumb" style="max-height:120px;border-radius:6px;max-width:100%" alt="preview"/>
+            </div>
+            <div id="jImgLabel" style="font-size:.75rem;color:var(--text-3)">📷 Drop screenshot or tap to upload</div>
+          </div>
+          <input type="file" id="jImgInput" accept="image/*" style="display:none" onchange="handleJournalImgSelect(this.files)"/>
+          <button id="jImgClear" style="display:none;margin-top:6px;background:none;border:none;color:var(--red);font-size:.7rem;cursor:pointer" onclick="clearJournalImg()">✕ Remove image</button>
         </div>
         <button class="btn-sm btn-success-sm" onclick="saveJournalEntry()" style="width:100%;padding:10px">Save Journal Entry</button>
       </div>
@@ -569,7 +630,11 @@ function renderJournal() {
 
   <div id="journalEntries"><div class="shimmer" style="height:100px;margin-bottom:10px"></div></div>
   `;
-  document.getElementById('jDate').value = new Date().toISOString().split('T')[0];
+  // Set today's date only if no saved state
+  if (!journalFormState.date) {
+    document.getElementById('jDate').value = new Date().toISOString().split('T')[0];
+  }
+  restoreJournalFormState();
   loadJournalEntries();
 }
 
@@ -592,6 +657,48 @@ function filterJournal(filter, btn) {
   btn.classList.add('active');
   loadJournalEntries();
 }
+// Journal image state
+let journalImgData = null;
+let journalImgMime = 'image/jpeg';
+
+function handleJournalImgDrop(e) {
+  e.preventDefault();
+  document.getElementById('jImgDrop').style.borderColor = 'var(--border2)';
+  const file = e.dataTransfer?.files?.[0];
+  if (file && file.type.startsWith('image/')) setJournalImg(file);
+}
+function handleJournalImgSelect(files) {
+  if (files?.[0]) setJournalImg(files[0]);
+}
+function setJournalImg(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    journalImgData = e.target.result; // base64 data URL
+    journalImgMime = file.type;
+    const thumb = document.getElementById('jImgThumb');
+    const preview = document.getElementById('jImgPreview');
+    const label = document.getElementById('jImgLabel');
+    const clearBtn = document.getElementById('jImgClear');
+    if (thumb) { thumb.src = journalImgData; }
+    if (preview) preview.style.display = 'block';
+    if (label) label.textContent = '✓ ' + file.name;
+    if (clearBtn) clearBtn.style.display = 'inline-block';
+  };
+  reader.readAsDataURL(file);
+}
+function clearJournalImg() {
+  journalImgData = null;
+  journalImgMime = 'image/jpeg';
+  const preview = document.getElementById('jImgPreview');
+  const label = document.getElementById('jImgLabel');
+  const clearBtn = document.getElementById('jImgClear');
+  const input = document.getElementById('jImgInput');
+  if (preview) preview.style.display = 'none';
+  if (label) label.textContent = '📷 Drop screenshot or click to upload';
+  if (clearBtn) clearBtn.style.display = 'none';
+  if (input) input.value = '';
+}
+
 async function saveJournalEntry() {
   if (!currentUser) { showToast('Sign in first', 'error'); return; }
   const date = document.getElementById('jDate').value;
@@ -599,11 +706,33 @@ async function saveJournalEntry() {
   const result = document.getElementById('jResult').value;
   if (!date || !instrument || !result) { showToast('Date, instrument and result required', 'error'); return; }
   const emotion = activeJournalEmotions[activeFirm] || '';
-  const { error } = await sb.from('journal_entries').insert({ user_id: currentUser.id, date, instrument, result, emotion, reasoning: document.getElementById('jReason').value, went_well: document.getElementById('jWell').value, improve: document.getElementById('jImprove').value, account_provider: activeFirm === 'All' ? 'Other' : activeFirm });
+  const firmVal = activeFirm === 'All' ? 'Other' : activeFirm;
+  const entryData = {
+    user_id: currentUser.id,
+    date, instrument, result, emotion,
+    reasoning: document.getElementById('jReason').value,
+    went_well: document.getElementById('jWell').value,
+    improve:   document.getElementById('jImprove').value,
+    account_provider: firmVal
+  };
+  let { error } = await sb.from('journal_entries').insert(entryData);
+  // If account_provider column doesn't exist yet, retry without it
+  if (error && error.message && error.message.includes('account_provider')) {
+    const { account_provider, ...dataWithout } = entryData;
+    const retry = await sb.from('journal_entries').insert(dataWithout);
+    error = retry.error;
+  }
   if (error) { showToast('Error: '+error.message, 'error'); return; }
   showToast('Journal entry saved!', 'success');
+  // Store image locally if provided
+  if (journalImgData) {
+    const imgKey = 'ts_jimg_' + date + '_' + instrument.replace(/\s/g,'');
+    try { localStorage.setItem(imgKey, journalImgData); } catch(e) { /* storage full */ }
+    clearJournalImg();
+  }
   ['jReason','jWell','jImprove','jResult','jInstrument'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
   activeJournalEmotions[activeFirm] = '';
+  journalFormState = { open: false, date:'', instrument:'', result:'', emotion:'', reason:'', well:'', improve:'' };
   document.querySelectorAll('.emotion-btn').forEach(b => b.classList.remove('selected'));
   document.getElementById('newEntryForm').style.display = 'none';
   document.getElementById('newEntryBtn').textContent = '+ New Entry';
@@ -632,6 +761,7 @@ async function loadJournalEntries() {
       ${e.reasoning?`<div class="jentry-section"><div class="jentry-section-label">Why I Entered</div><div class="jentry-text">${e.reasoning}</div></div>`:''}
       ${e.went_well?`<div class="jentry-section"><div class="jentry-section-label">What Went Well</div><div class="jentry-text">${e.went_well}</div></div>`:''}
       ${e.improve?`<div class="jentry-section"><div class="jentry-section-label">What To Improve</div><div class="jentry-text">${e.improve}</div></div>`:''}
+      ${(()=>{const k='ts_jimg_'+e.date+'_'+(e.instrument||'').replace(/\s/g,'');const img=localStorage.getItem(k);return img?`<div class="jentry-section"><div class="jentry-section-label">Screenshot</div><img src="${img}" style="max-width:100%;max-height:200px;border-radius:6px;margin-top:4px" loading="lazy"/></div>`:'';})()}
     </div>`;
   }).join('') || `<div style="text-align:center;padding:24px;color:var(--text-3);font-size:.75rem">No ${activeJournalFilter} entries found.</div>`;
 }
@@ -725,15 +855,19 @@ function renderHelp() {
 }
 
 // ══ OBJECTIVES ══
+// FTMO logic:
+// - Daily loss limit = % of INITIAL balance (not current equity)
+// - Max overall loss = % of INITIAL balance
+// - Profit target    = % of INITIAL balance
+// - Daily loss = sum of all closed trades on that specific day
+// - A "breach" = hitting the limit, not going past it
 function renderObjectives(trades) {
   const c = document.getElementById('pageContent');
-
-  // ── Load saved settings ──
   const firm = activeFirm === 'All' ? 'FTMO' : activeFirm;
   const settingsKey = 'ts_obj_' + firm;
   const saved = JSON.parse(localStorage.getItem(settingsKey) || 'null');
 
-  // Default limits per firm
+  // FTMO standard defaults (based on official FTMO rules)
   const DEFAULTS = {
     FTMO:    { balance: 100000, dailyLoss: 5,  maxLoss: 10, profitTarget: 10, minDays: 4 },
     Deriv:   { balance: 10000,  dailyLoss: 5,  maxLoss: 10, profitTarget: 10, minDays: 2 },
@@ -742,114 +876,178 @@ function renderObjectives(trades) {
   };
   const cfg = saved || DEFAULTS[firm] || DEFAULTS.FTMO;
 
-  // ── Compute stats from trades ──
-  const startBal  = parseFloat(localStorage.getItem('ts_startbal_' + activeFirm) || cfg.balance) || cfg.balance;
-  const netPnl    = trades.reduce((s, t) => s + parseFloat(t.profit_loss || 0), 0);
-  const equity    = startBal + netPnl;
-  const balance   = equity;
+  // ── Core calculations (FTMO-accurate) ──
+  // cfg.balance = the initial account balance (what you started with)
+  const initialBal    = parseFloat(cfg.balance)  || 100000;
+  const dailyLossPct  = parseFloat(cfg.dailyLoss)  / 100;  // e.g. 0.05 for 5%
+  const maxLossPct    = parseFloat(cfg.maxLoss)     / 100;  // e.g. 0.10 for 10%
+  const profitTgtPct  = parseFloat(cfg.profitTarget)/ 100;  // e.g. 0.10 for 10%
 
-  // Daily P&L map
+  // Dollar limits (calculated from INITIAL balance — FTMO standard)
+  const dailyLossLimit = initialBal * dailyLossPct;   // e.g. $5,000 for 100k/5%
+  const maxLossLimit   = initialBal * maxLossPct;     // e.g. $10,000 for 100k/10%
+  const profitTarget   = initialBal * profitTgtPct;   // e.g. $10,000 for 100k/10%
+
+  // Total net P&L
+  const netPnl = trades.reduce((s, t) => s + parseFloat(t.profit_loss || 0), 0);
+  const equity = initialBal + netPnl;
+
+  // Build daily P&L map
   const dayMap = {};
   trades.forEach(t => {
     if (!t.date) return;
     const d = t.date.slice(0, 10);
-    if (!dayMap[d]) dayMap[d] = { pnl: 0, trades: 0, lots: 0 };
-    dayMap[d].pnl    += parseFloat(t.profit_loss || 0);
-    dayMap[d].trades += 1;
-    dayMap[d].lots   += parseFloat(t.lots || t.volume || 0);
+    if (!dayMap[d]) dayMap[d] = { pnl: 0, count: 0 };
+    dayMap[d].pnl   += parseFloat(t.profit_loss || 0);
+    dayMap[d].count += 1;
   });
 
-  const tradingDays  = Object.keys(dayMap).length;
-  const todayStr     = new Date().toISOString().split('T')[0];
-  const todayPnl     = dayMap[todayStr]?.pnl || 0;
-  const worstDay     = Math.min(0, ...Object.values(dayMap).map(d => d.pnl));
-  const totalLoss    = Math.min(0, netPnl);
+  const tradingDays = Object.keys(dayMap).length;
+  const todayStr    = new Date().toISOString().split('T')[0];
+  const todayPnl    = dayMap[todayStr]?.pnl || 0;
 
-  // Limits in dollars
-  const dailyLossLimit  = -(startBal * cfg.dailyLoss  / 100);
-  const maxLossLimit    = -(startBal * cfg.maxLoss    / 100);
-  const profitTargetAmt =   startBal * cfg.profitTarget / 100;
+  // Worst single day loss (most negative day P&L)
+  const dayPnls = Object.values(dayMap).map(d => d.pnl);
+  const worstDayPnl = dayPnls.length ? Math.min(...dayPnls) : 0;
+  // Only count it as a loss figure if it's negative
+  const worstDayLoss = Math.abs(Math.min(0, worstDayPnl)); // positive number = amount lost
 
-  // Pass/fail checks
-  const passDays        = tradingDays >= cfg.minDays;
-  const passDailyLoss   = worstDay   >= dailyLossLimit;
-  const passMaxLoss     = totalLoss  >= maxLossLimit;
-  const passProfit      = netPnl     >= profitTargetAmt;
+  // Total drawdown from initial balance (only losses count)
+  const totalLossAmt = Math.abs(Math.min(0, netPnl)); // positive number = amount lost
 
-  // Discipline score (0–100) — how well rules are followed
-  let score = 0;
-  if (passDays)      score += 20;
-  if (passDailyLoss) score += 30;
-  if (passMaxLoss)   score += 30;
-  if (passProfit)    score += 20;
-  // Penalise if close to breach
-  const dailyPct  = worstDay < 0   ? Math.min(100, Math.abs(worstDay   / dailyLossLimit)  * 100) : 0;
-  const maxPct    = totalLoss < 0  ? Math.min(100, Math.abs(totalLoss  / maxLossLimit)    * 100) : 0;
-  if (dailyPct > 70) score -= 10;
-  if (maxPct   > 70) score -= 10;
-  score = Math.max(0, Math.min(100, score));
+  // ── Pass/Fail (FTMO rules) ──
+  // PASS = you have NOT breached the limit
+  const passDays      = tradingDays >= cfg.minDays;
+  const passDailyLoss = worstDayLoss < dailyLossLimit;   // < not <=  (breach = reaching the limit)
+  const passMaxLoss   = totalLossAmt < maxLossLimit;      // < not <=
+  const passProfit    = netPnl       >= profitTarget;     // must reach or exceed target
+
+  // ── Discipline Score ──
+  // Based on how far you are from breaching each limit (proximity scoring)
+  // If 0% used → full points. If 100% used → 0 points.
+  const dailyUsedPct  = worstDayLoss > 0 ? Math.min(1, worstDayLoss / dailyLossLimit) : 0;
+  const maxUsedPct    = totalLossAmt > 0 ? Math.min(1, totalLossAmt / maxLossLimit)   : 0;
+  const profitProgress = Math.min(1, Math.max(0, netPnl / profitTarget));
+  const daysProgress   = Math.min(1, tradingDays / cfg.minDays);
+
+  // Score components (40 pts risk discipline, 40 pts profit progress, 20 pts days)
+  const riskScore    = Math.round(((1 - dailyUsedPct) * 20) + ((1 - maxUsedPct) * 20));
+  const profitScore  = Math.round(profitProgress * 40);
+  const daysScore    = Math.round(daysProgress   * 20);
+  const score        = Math.min(100, riskScore + profitScore + daysScore);
 
   const scoreLabel = score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Average' : 'Needs Work';
-  const scoreColor = score >= 80 ? '#22d07a'  : score >= 60 ? '#f5a623' : '#f54b5e';
+  const scoreColor = score >= 80 ? '#22d07a'   : score >= 60 ? '#f5a623' : '#f54b5e';
 
-  // Daily summary rows (last 7 trading days)
-  const sortedDays = Object.keys(dayMap).sort().reverse().slice(0, 7);
+  // ── Today's remaining permitted loss ──
+  // FTMO: you can lose up to dailyLossLimit per day
+  // If today is negative, remaining = dailyLossLimit - |todayLoss|
+  const todayLoss = Math.abs(Math.min(0, todayPnl));
+  const todayPermittedRemaining = Math.max(0, dailyLossLimit - todayLoss);
 
-  // ── Render ──
+  // ── Max permitted loss remaining (overall) ──
+  const maxPermittedRemaining = Math.max(0, maxLossLimit - totalLossAmt);
+
+  // ── Daily summary (last 7 days) ──
+  const sortedDays = Object.keys(dayMap).sort().reverse().slice(0, 10);
+
+  // ── Format helpers ──
+  const fmt  = (n) => '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2 });
+  const fmtS = (n) => (n >= 0 ? '+$' : '-$') + Math.abs(n).toFixed(2);
+  const pct  = (n) => (n * 100).toFixed(1) + '%';
+
   c.innerHTML = `
   <!-- Settings row -->
-  <div style="display:flex;align-items:center;gap:8px;margin-bottom:18px;flex-wrap:wrap">
-    <span style="font-size:.72rem;font-weight:600;color:var(--text-3)">Configure limits for</span>
-    <strong style="color:var(--brand)">${firm}</strong>
-    <button class="btn-sm btn-outline-sm" onclick="toggleObjSettings()" id="objSettingsBtn">⚙ Edit Limits</button>
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap">
+    <div style="font-size:.78rem;color:var(--text-3)">Account limits for</div>
+    <strong style="color:var(--brand);font-size:.9rem">${firm}</strong>
+    <div style="font-family:var(--f-mono);font-size:.65rem;color:var(--text-3)">
+      Balance: <strong style="color:var(--text)">${fmt(initialBal)}</strong> ·
+      Daily limit: <strong style="color:var(--red)">${pct(dailyLossPct)}</strong> ·
+      Max loss: <strong style="color:var(--red)">${pct(maxLossPct)}</strong> ·
+      Target: <strong style="color:var(--green)">${pct(profitTgtPct)}</strong>
+    </div>
+    <button class="btn-sm btn-outline-sm" onclick="toggleObjSettings()">⚙ Edit</button>
   </div>
 
-  <!-- Settings Panel (hidden by default) -->
+  <!-- Settings Panel -->
   <div id="objSettingsPanel" style="display:none;margin-bottom:18px">
     <div class="chart-card">
-      <div class="chart-card-header"><div class="chart-card-title">⚙ Account Limits — ${firm}</div><button onclick="toggleObjSettings()" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:18px">✕</button></div>
+      <div class="chart-card-header">
+        <div class="chart-card-title">⚙ Configure ${firm} Account Limits</div>
+        <button onclick="toggleObjSettings()" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:18px">✕</button>
+      </div>
       <div class="chart-body">
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:14px">
-          <div class="field-group"><label class="field-label">Account Balance ($)</label><input type="number" class="field-input" id="cfg_balance" value="${cfg.balance}" placeholder="e.g. 100000"/></div>
-          <div class="field-group"><label class="field-label">Daily Loss Limit (%)</label><input type="number" class="field-input" id="cfg_daily" value="${cfg.dailyLoss}" placeholder="e.g. 5" step="0.1"/></div>
-          <div class="field-group"><label class="field-label">Max Loss Limit (%)</label><input type="number" class="field-input" id="cfg_max" value="${cfg.maxLoss}" placeholder="e.g. 10" step="0.1"/></div>
-          <div class="field-group"><label class="field-label">Profit Target (%)</label><input type="number" class="field-input" id="cfg_profit" value="${cfg.profitTarget}" placeholder="e.g. 10" step="0.1"/></div>
-          <div class="field-group"><label class="field-label">Min Trading Days</label><input type="number" class="field-input" id="cfg_days" value="${cfg.minDays}" placeholder="e.g. 4"/></div>
+        <div style="background:rgba(79,142,247,.07);border:1px solid rgba(79,142,247,.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-family:var(--f-mono);font-size:.68rem;color:var(--brand-l);line-height:1.8">
+          <strong>How FTMO limits work:</strong><br>
+          All limits are based on your <strong>initial account balance</strong>.<br>
+          Daily Loss Limit 5% on $100k = you cannot lose more than $5,000 in one day.<br>
+          Max Loss 10% on $100k = total drawdown cannot exceed $10,000.<br>
+          Profit Target 10% on $100k = you need to make $10,000.
         </div>
-        <button class="btn-sm btn-success-sm" onclick="saveObjSettings('${firm}')" style="padding:9px 20px">Save Limits</button>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:14px">
+          <div class="field-group">
+            <label class="field-label">Initial Account Balance ($)</label>
+            <input type="number" class="field-input" id="cfg_balance" value="${cfg.balance}" placeholder="e.g. 100000"/>
+            <div style="font-size:.6rem;color:var(--text-3);margin-top:3px">Starting balance — never changes</div>
+          </div>
+          <div class="field-group">
+            <label class="field-label">Daily Loss Limit (%)</label>
+            <input type="number" class="field-input" id="cfg_daily" value="${cfg.dailyLoss}" placeholder="e.g. 5" step="0.1" min="0.1" max="20"/>
+            <div style="font-size:.6rem;color:var(--text-3);margin-top:3px">FTMO standard: 5% = $${(initialBal*0.05).toLocaleString()} on $${initialBal.toLocaleString()}</div>
+          </div>
+          <div class="field-group">
+            <label class="field-label">Max Overall Loss (%)</label>
+            <input type="number" class="field-input" id="cfg_max" value="${cfg.maxLoss}" placeholder="e.g. 10" step="0.1" min="0.1" max="30"/>
+            <div style="font-size:.6rem;color:var(--text-3);margin-top:3px">FTMO standard: 10% = $${(initialBal*0.10).toLocaleString()}</div>
+          </div>
+          <div class="field-group">
+            <label class="field-label">Profit Target (%)</label>
+            <input type="number" class="field-input" id="cfg_profit" value="${cfg.profitTarget}" placeholder="e.g. 10" step="0.1" min="0.1" max="50"/>
+            <div style="font-size:.6rem;color:var(--text-3);margin-top:3px">FTMO standard: 10% = $${(initialBal*0.10).toLocaleString()}</div>
+          </div>
+          <div class="field-group">
+            <label class="field-label">Min Trading Days</label>
+            <input type="number" class="field-input" id="cfg_days" value="${cfg.minDays}" placeholder="e.g. 4" min="1" max="30"/>
+            <div style="font-size:.6rem;color:var(--text-3);margin-top:3px">FTMO Phase 1: 4 minimum days</div>
+          </div>
+        </div>
+        <button class="btn-sm btn-success-sm" onclick="saveObjSettings('${firm}')" style="padding:10px 24px">Save Limits</button>
       </div>
     </div>
   </div>
 
-  <!-- Top row: Discipline Score + Objectives -->
-  <div style="display:grid;grid-template-columns:340px 1fr;gap:16px;margin-bottom:16px;align-items:start">
+  <!-- Top: Gauge + Objectives -->
+  <div style="display:grid;grid-template-columns:320px 1fr;gap:16px;margin-bottom:14px;align-items:start">
 
-    <!-- Discipline Score -->
+    <!-- Discipline Score Gauge -->
     <div class="chart-card">
       <div class="chart-card-header">
-        <div><div class="chart-card-title">Discipline Score</div></div>
-        <div style="display:flex;gap:8px;align-items:center;font-family:var(--f-mono);font-size:.58rem;flex-wrap:wrap">
-          <span style="color:var(--red)">● 0–30%</span>
-          <span style="color:var(--amber)">● 30–80%</span>
-          <span style="color:var(--green)">● 80–100%</span>
+        <div class="chart-card-title">Discipline Score</div>
+        <div style="display:flex;gap:8px;font-family:var(--f-mono);font-size:.56rem">
+          <span style="color:var(--red)">● 0–30</span>
+          <span style="color:var(--amber)">● 30–80</span>
+          <span style="color:var(--green)">● 80–100</span>
         </div>
       </div>
-      <div class="chart-body" style="display:flex;flex-direction:column;align-items:center;padding:20px">
-        <div style="position:relative;width:200px;height:110px;margin-bottom:10px">
-          <canvas id="gaugeCanvas" width="200" height="110"></canvas>
-          <div style="position:absolute;bottom:10px;left:0;right:0;text-align:center">
-            <div style="font-family:var(--f-disp);font-size:2rem;font-weight:800;color:${scoreColor};line-height:1">${score}%</div>
-            <div style="font-family:var(--f-mono);font-size:.68rem;color:${scoreColor}">${scoreLabel}</div>
+      <div class="chart-body" style="display:flex;flex-direction:column;align-items:center;padding:16px 20px">
+        <div style="position:relative;width:200px;height:115px">
+          <canvas id="gaugeCanvas" width="200" height="115"></canvas>
+          <div style="position:absolute;bottom:4px;left:0;right:0;text-align:center">
+            <div style="font-family:var(--f-disp);font-size:2.2rem;font-weight:800;color:${scoreColor};line-height:1">${score}%</div>
+            <div style="font-family:var(--f-mono);font-size:.65rem;color:${scoreColor};margin-top:2px">${scoreLabel}</div>
           </div>
         </div>
-        <div style="width:100%;display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+        <div style="width:100%;display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
           <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center">
-            <div style="font-family:var(--f-mono);font-size:.55rem;color:var(--text-3);margin-bottom:4px">EQUITY</div>
-            <div style="font-family:var(--f-disp);font-size:.95rem;font-weight:800;color:var(--text)">$${equity.toLocaleString('en-US',{minimumFractionDigits:2})}</div>
+            <div style="font-family:var(--f-mono);font-size:.52rem;color:var(--text-3);margin-bottom:4px;text-transform:uppercase">Equity</div>
+            <div style="font-family:var(--f-disp);font-size:.9rem;font-weight:800;color:${netPnl>=0?'var(--green)':'var(--red)'}">${fmt(equity)}</div>
+            <div style="font-family:var(--f-mono);font-size:.55rem;color:var(--text-3);margin-top:2px">${fmtS(netPnl)}</div>
           </div>
           <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center">
-            <div style="font-family:var(--f-mono);font-size:.55rem;color:var(--text-3);margin-bottom:4px">BALANCE</div>
-            <div style="font-family:var(--f-disp);font-size:.95rem;font-weight:800;color:var(--text)">$${balance.toLocaleString('en-US',{minimumFractionDigits:2})}</div>
+            <div style="font-family:var(--f-mono);font-size:.52rem;color:var(--text-3);margin-bottom:4px;text-transform:uppercase">Balance</div>
+            <div style="font-family:var(--f-disp);font-size:.9rem;font-weight:800;color:var(--text)">${fmt(initialBal)}</div>
+            <div style="font-family:var(--f-mono);font-size:.55rem;color:var(--text-3);margin-top:2px">Initial</div>
           </div>
         </div>
       </div>
@@ -857,95 +1055,199 @@ function renderObjectives(trades) {
 
     <!-- Objectives Table -->
     <div class="chart-card">
-      <div class="chart-card-header"><div class="chart-card-title">Objectives</div></div>
+      <div class="chart-card-header"><div class="chart-card-title">Objectives</div><div style="font-family:var(--f-mono);font-size:.6rem;color:var(--text-3)">Based on ${fmt(initialBal)} initial balance</div></div>
       <div style="overflow-x:auto">
         <table class="data-table">
-          <thead><tr><th>Trading Objective</th><th>Limit</th><th>Your Result</th><th style="text-align:center">Status</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Trading Objective</th>
+              <th>Limit</th>
+              <th>Your Result</th>
+              <th style="text-align:center">Status</th>
+            </tr>
+          </thead>
           <tbody>
-            ${objRow('Minimum Trading Days',      cfg.minDays + ' days',          tradingDays + ' days',           passDays)}
-            ${objRow('Max Daily Loss',            '-$'+Math.abs(dailyLossLimit).toLocaleString('en-US',{minimumFractionDigits:2})+' (-'+cfg.dailyLoss+'%)', '$'+worstDay.toFixed(2)+' ('+((worstDay/startBal)*100).toFixed(1)+'%)', passDailyLoss)}
-            ${objRow('Max Overall Loss',          '-$'+Math.abs(maxLossLimit).toLocaleString('en-US',{minimumFractionDigits:2})+' (-'+cfg.maxLoss+'%)',    '$'+totalLoss.toFixed(2)+' ('+(( totalLoss/startBal)*100).toFixed(1)+'%)',  passMaxLoss)}
-            ${objRow('Profit Target',             '+$'+profitTargetAmt.toLocaleString('en-US',{minimumFractionDigits:2})+' (+'+cfg.profitTarget+'%)',      (netPnl>=0?'+$':'-$')+Math.abs(netPnl).toFixed(2)+' ('+((netPnl/startBal)*100).toFixed(1)+'%)', passProfit)}
+            ${objRow(
+              'Minimum Trading Days',
+              cfg.minDays + ' days',
+              tradingDays + ' day' + (tradingDays !== 1 ? 's' : ''),
+              passDays,
+              tradingDays + '/' + cfg.minDays
+            )}
+            ${objRow(
+              'Max Daily Loss: -' + fmt(dailyLossLimit) + ' (-' + pct(dailyLossPct) + ')',
+              '-' + fmt(dailyLossLimit),
+              worstDayLoss > 0 ? '-' + fmt(worstDayLoss) + ' (-' + (worstDayLoss/initialBal*100).toFixed(2) + '%)' : '$0.00 (0%)',
+              passDailyLoss,
+              (dailyUsedPct*100).toFixed(0) + '% used'
+            )}
+            ${objRow(
+              'Max Overall Loss: -' + fmt(maxLossLimit) + ' (-' + pct(maxLossPct) + ')',
+              '-' + fmt(maxLossLimit),
+              totalLossAmt > 0 ? '-' + fmt(totalLossAmt) + ' (-' + (totalLossAmt/initialBal*100).toFixed(2) + '%)' : '$0.00 (0%)',
+              passMaxLoss,
+              (maxUsedPct*100).toFixed(0) + '% used'
+            )}
+            ${objRow(
+              'Profit Target: +' + fmt(profitTarget) + ' (+' + pct(profitTgtPct) + ')',
+              '+' + fmt(profitTarget),
+              fmtS(netPnl) + ' (' + (netPnl/initialBal*100).toFixed(2) + '%)',
+              passProfit,
+              (profitProgress*100).toFixed(0) + '% done'
+            )}
           </tbody>
         </table>
       </div>
     </div>
   </div>
 
-  <!-- Quick stats bar (like FTMO's 3-box row) -->
-  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
-    ${quickStatBox("Today's Permitted Loss", '$'+Math.abs(dailyLossLimit).toFixed(2), todayPnl < 0 ? 'var(--red)' : 'var(--green)')}
-    ${quickStatBox("Max Permitted Loss",     '$'+(startBal + maxLossLimit).toFixed(2), 'var(--text)')}
-    ${quickStatBox("Today's Profit/Loss",    (todayPnl>=0?'+$':'-$')+Math.abs(todayPnl).toFixed(2), todayPnl >= 0 ? 'var(--green)' : 'var(--red)')}
+  <!-- Quick stats (FTMO style 3-box) -->
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
+    <div style="background:var(--surface);border:1.5px solid ${todayPermittedRemaining < dailyLossLimit*0.3?'var(--red-br,rgba(245,75,94,.3))':'var(--border)'};border-radius:var(--r);padding:16px;text-align:center;transition:border-color .2s">
+      <div style="font-size:.68rem;color:var(--text-3);margin-bottom:6px;font-family:var(--f-mono)">Today's Permitted Loss ℹ</div>
+      <div style="font-family:var(--f-disp);font-size:1.4rem;font-weight:800;color:${todayPermittedRemaining<dailyLossLimit*0.3?'var(--red)':'var(--green)'}">-$${todayPermittedRemaining.toFixed(2)}</div>
+      <div style="font-size:.62rem;color:var(--text-3);margin-top:4px;font-family:var(--f-mono)">Used: $${todayLoss.toFixed(2)} of $${dailyLossLimit.toFixed(2)}</div>
+    </div>
+    <div style="background:var(--surface);border:1.5px solid ${maxPermittedRemaining<maxLossLimit*0.3?'var(--red-br,rgba(245,75,94,.3))':'var(--border)'};border-radius:var(--r);padding:16px;text-align:center">
+      <div style="font-size:.68rem;color:var(--text-3);margin-bottom:6px;font-family:var(--f-mono)">Max Permitted Loss Remaining</div>
+      <div style="font-family:var(--f-disp);font-size:1.4rem;font-weight:800;color:${maxPermittedRemaining<maxLossLimit*0.3?'var(--red)':'var(--text)'}">$${maxPermittedRemaining.toFixed(2)}</div>
+      <div style="font-size:.62rem;color:var(--text-3);margin-top:4px;font-family:var(--f-mono)">Used: $${totalLossAmt.toFixed(2)} of $${maxLossLimit.toFixed(2)}</div>
+    </div>
+    <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r);padding:16px;text-align:center">
+      <div style="font-size:.68rem;color:var(--text-3);margin-bottom:6px;font-family:var(--f-mono)">Today's Profit / Loss</div>
+      <div style="font-family:var(--f-disp);font-size:1.4rem;font-weight:800;color:${todayPnl>=0?'var(--green)':'var(--red)'}">${todayPnl>=0?'+$':'-$'}${Math.abs(todayPnl).toFixed(2)}</div>
+      <div style="font-size:.62rem;color:var(--text-3);margin-top:4px;font-family:var(--f-mono)">${dayMap[todayStr]?.count||0} trade${(dayMap[todayStr]?.count||0)!==1?'s':''} today</div>
+    </div>
   </div>
 
-  <!-- Bottom row: Statistics + Daily Summary -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+  <!-- Progress to profit target (visual bar) -->
+  <div class="chart-card" style="margin-bottom:14px">
+    <div class="chart-card-header">
+      <div>
+        <div class="chart-card-title">Progress to Profit Target</div>
+        <div class="chart-card-sub">${fmtS(netPnl)} of ${fmt(profitTarget)} target · ${(profitProgress*100).toFixed(1)}% complete</div>
+      </div>
+      <span class="chart-badge ${passProfit?'cb-green':'cb-blue'}">${passProfit?'✓ TARGET HIT':Math.round(profitProgress*100)+'% there'}</span>
+    </div>
+    <div class="chart-body">
+      <div style="height:14px;background:var(--border2);border-radius:8px;overflow:hidden;margin-bottom:8px;position:relative">
+        <div style="height:100%;width:${Math.min(100,Math.max(0,profitProgress*100)).toFixed(1)}%;background:${passProfit?'var(--green)':'linear-gradient(90deg,var(--brand),var(--green))'};border-radius:8px;transition:width 1.4s cubic-bezier(.4,0,.2,1)"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-family:var(--f-mono);font-size:.62rem;color:var(--text-3)">
+        <span>$0 (0%)</span>
+        <span style="color:${netPnl>=0?'var(--green)':'var(--red)'}">Current: ${fmtS(netPnl)} (${(netPnl/initialBal*100).toFixed(2)}%)</span>
+        <span>Target: +${fmt(profitTarget)} (+${pct(profitTgtPct)})</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom: Statistics + Daily Summary -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
 
     <!-- Statistics -->
     <div class="chart-card">
       <div class="chart-card-header"><div class="chart-card-title">Statistics</div></div>
-      <div class="chart-body">
+      <div class="chart-body" style="padding:0">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border)">
-          ${statCell('Win Rate',       calcStats(trades).wr.toFixed(2)+'%',  calcStats(trades).wr >= 50 ? 'var(--green)' : 'var(--red)')}
-          ${statCell('Average Profit', '$'+calcStats(trades).aw.toFixed(2),  'var(--green)')}
-          ${statCell('Average Loss',   '-$'+calcStats(trades).al.toFixed(2), 'var(--red)')}
-          ${statCell('No. of Trades',  calcStats(trades).total, 'var(--text)')}
-          ${statCell('Profit Factor',  calcStats(trades).pf >= 99 ? '∞' : calcStats(trades).pf.toFixed(2), calcStats(trades).pf >= 1.5 ? 'var(--green)' : 'var(--red)')}
-          ${statCell('Expectancy',     '$'+calcStats(trades).exp.toFixed(2), calcStats(trades).exp >= 0 ? 'var(--green)' : 'var(--red)')}
-          ${statCell('Avg RRR',        calcStats(trades).rrr.toFixed(2), 'var(--amber)')}
-          ${statCell('Net P&L',        (netPnl>=0?'+$':'-$')+Math.abs(netPnl).toFixed(2), netPnl >= 0 ? 'var(--green)' : 'var(--red)')}
+          ${statCell('Win Rate',      calcStats(trades).wr.toFixed(2)+'%',          calcStats(trades).wr>=50?'var(--green)':'var(--red)')}
+          ${statCell('Average Profit','$'+calcStats(trades).aw.toFixed(2),          'var(--green)')}
+          ${statCell('Average Loss',  '-$'+Math.abs(calcStats(trades).al).toFixed(2),'var(--red)')}
+          ${statCell('No. of Trades', calcStats(trades).total+'',                   'var(--text)')}
+          ${statCell('Profit Factor', calcStats(trades).pf>=99?'∞':calcStats(trades).pf.toFixed(2), calcStats(trades).pf>=1.5?'var(--green)':'var(--red)')}
+          ${statCell('Expectancy',    (calcStats(trades).exp>=0?'+$':'-$')+Math.abs(calcStats(trades).exp).toFixed(2), calcStats(trades).exp>=0?'var(--green)':'var(--red)')}
+          ${statCell('Avg RRR',       calcStats(trades).rrr.toFixed(2),             'var(--amber)')}
+          ${statCell('Net P&L',       (netPnl>=0?'+$':'-$')+Math.abs(netPnl).toFixed(2), netPnl>=0?'var(--green)':'var(--red)')}
         </div>
       </div>
     </div>
 
     <!-- Daily Summary -->
     <div class="chart-card">
-      <div class="chart-card-header"><div class="chart-card-title">Daily Summary</div><span style="font-size:.65rem;color:var(--text-3);font-family:var(--f-mono)">Last ${sortedDays.length} days</span></div>
+      <div class="chart-card-header">
+        <div class="chart-card-title">Daily Summary</div>
+        <span style="font-size:.62rem;color:var(--text-3);font-family:var(--f-mono)">Last ${sortedDays.length} trading days</span>
+      </div>
       <div style="overflow-x:auto">
         <table class="data-table">
-          <thead><tr><th>Date</th><th>Trades</th><th>Result</th><th>Status</th></tr></thead>
+          <thead><tr><th>Date</th><th>Trades</th><th>P&L</th><th>Daily Limit</th><th>Status</th></tr></thead>
           <tbody>
             ${sortedDays.length ? sortedDays.map(d => {
               const day = dayMap[d];
-              const pass = day.pnl >= dailyLossLimit;
+              const dayLoss = Math.abs(Math.min(0, day.pnl));
+              const usedPct = (dayLoss / dailyLossLimit * 100).toFixed(0);
+              const breach  = dayLoss >= dailyLossLimit;
+              const warning = !breach && dayLoss >= dailyLossLimit * 0.7;
               return `<tr>
-                <td style="color:var(--brand);font-family:var(--f-mono);font-weight:600">${d.slice(5)}</td>
-                <td>${day.trades}</td>
+                <td style="color:var(--brand);font-family:var(--f-mono);font-weight:600">${d}</td>
+                <td style="font-family:var(--f-mono)">${day.count}</td>
                 <td style="color:${day.pnl>=0?'var(--green)':'var(--red)'};font-weight:700;font-family:var(--f-mono)">${day.pnl>=0?'+$':'-$'}${Math.abs(day.pnl).toFixed(2)}</td>
-                <td>${pass
-                  ? '<span style="background:rgba(34,208,122,.15);color:var(--green);border:1px solid rgba(34,208,122,.3);border-radius:4px;padding:2px 8px;font-size:.65rem;font-weight:700">✓ OK</span>'
-                  : '<span style="background:rgba(245,75,94,.15);color:var(--red);border:1px solid rgba(245,75,94,.3);border-radius:4px;padding:2px 8px;font-size:.65rem;font-weight:700">✗ BREACH</span>'
+                <td style="font-family:var(--f-mono);font-size:.65rem;color:${breach?'var(--red)':warning?'var(--amber)':'var(--text-3)'}">
+                  ${usedPct}% used
+                </td>
+                <td>${breach
+                  ? '<span style="background:rgba(245,75,94,.15);color:var(--red);border:1px solid rgba(245,75,94,.3);border-radius:4px;padding:2px 8px;font-size:.62rem;font-weight:700">✗ BREACH</span>'
+                  : warning
+                  ? '<span style="background:rgba(245,166,35,.15);color:var(--amber);border:1px solid rgba(245,166,35,.3);border-radius:4px;padding:2px 8px;font-size:.62rem;font-weight:700">⚠ NEAR</span>'
+                  : '<span style="background:rgba(34,208,122,.15);color:var(--green);border:1px solid rgba(34,208,122,.3);border-radius:4px;padding:2px 8px;font-size:.62rem;font-weight:700">✓ OK</span>'
                 }</td>
               </tr>`;
-            }).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:20px">No trades yet</td></tr>'}
+            }).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:20px">No trades yet — import trades to see daily summary</td></tr>'}
           </tbody>
         </table>
       </div>
     </div>
   </div>
-
-  <!-- Progress to profit target -->
-  <div class="chart-card" style="margin-top:16px">
-    <div class="chart-card-header">
-      <div><div class="chart-card-title">Progress to Profit Target</div><div class="chart-card-sub">$${netPnl.toFixed(2)} of $${profitTargetAmt.toFixed(2)} target</div></div>
-      <span class="chart-badge ${passProfit ? 'cb-green' : 'cb-red'}">${passProfit ? '✓ PASSED' : Math.round(netPnl / profitTargetAmt * 100) + '%'}</span>
-    </div>
-    <div class="chart-body">
-      <div style="height:12px;background:var(--border2);border-radius:8px;overflow:hidden;margin-bottom:8px">
-        <div style="height:100%;width:${Math.min(100,Math.max(0,netPnl/profitTargetAmt*100)).toFixed(1)}%;background:${passProfit?'var(--green)':'var(--brand)'};border-radius:8px;transition:width 1.4s cubic-bezier(.4,0,.2,1)"></div>
-      </div>
-      <div style="display:flex;justify-content:space-between;font-family:var(--f-mono);font-size:.65rem;color:var(--text-3)">
-        <span>$0</span>
-        <span style="color:${netPnl>=0?'var(--green)':'var(--red)'}">Current: ${netPnl>=0?'+$':'-$'}${Math.abs(netPnl).toFixed(2)}</span>
-        <span>Target: $${profitTargetAmt.toFixed(2)}</span>
-      </div>
-    </div>
-  </div>
   `;
 
-  // Draw gauge
   setTimeout(() => drawDisciplineGauge('gaugeCanvas', score), 60);
+}
+
+// ── Objective row helper ──
+function objRow(label, limit, result, pass, extra) {
+  const icon = pass
+    ? `<div style="width:24px;height:24px;background:rgba(34,208,122,.2);border:1px solid rgba(34,208,122,.4);border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--green);font-size:.75rem;font-weight:700;margin:0 auto">✓</div>`
+    : `<div style="width:24px;height:24px;background:rgba(245,75,94,.2);border:1px solid rgba(245,75,94,.4);border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--red);font-size:.75rem;font-weight:700;margin:0 auto">✗</div>`;
+  return `<tr>
+    <td style="color:var(--brand);font-weight:600;font-size:.78rem">${label}</td>
+    <td style="font-family:var(--f-mono);font-size:.7rem;color:var(--text-2)">${limit}</td>
+    <td style="font-family:var(--f-mono);font-size:.7rem;color:var(--text)">${result}</td>
+    <td style="text-align:center">${icon}<div style="font-family:var(--f-mono);font-size:.55rem;color:var(--text-3);margin-top:3px">${extra||''}</div></td>
+  </tr>`;
+}
+
+// ── Quick stat box ──
+function quickStatBox(label, value, valueColor) {
+  return `<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r);padding:16px 18px;text-align:center">
+    <div style="font-size:.68rem;color:var(--text-3);margin-bottom:6px;font-family:var(--f-mono)">${label}</div>
+    <div style="font-family:var(--f-disp);font-size:1.3rem;font-weight:800;color:${valueColor}">${value}</div>
+  </div>`;
+}
+
+// ── Stat cell ──
+function statCell(label, value, valueColor) {
+  return `<div style="background:var(--surface);padding:14px;text-align:center">
+    <div style="font-size:.6rem;color:var(--text-3);margin-bottom:5px;font-family:var(--f-mono);text-transform:uppercase;letter-spacing:.5px">${label}</div>
+    <div style="font-family:var(--f-disp);font-size:1rem;font-weight:800;color:${valueColor}">${value}</div>
+  </div>`;
+}
+
+// ── Settings toggle / save ──
+function toggleObjSettings() {
+  const panel = document.getElementById('objSettingsPanel');
+  if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+function saveObjSettings(firm) {
+  const cfg = {
+    balance:       parseFloat(document.getElementById('cfg_balance').value) || 100000,
+    dailyLoss:     parseFloat(document.getElementById('cfg_daily').value)   || 5,
+    maxLoss:       parseFloat(document.getElementById('cfg_max').value)     || 10,
+    profitTarget:  parseFloat(document.getElementById('cfg_profit').value)  || 10,
+    minDays:       parseInt(  document.getElementById('cfg_days').value)    || 4
+  };
+  localStorage.setItem('ts_obj_' + firm, JSON.stringify(cfg));
+  showToast('Limits saved for ' + firm + '!', 'success');
+  toggleObjSettings();
+  renderPage('objectives');
 }
 
 // ── Gauge (semicircle) ──
