@@ -968,3 +968,13 @@ a { text-decoration: none; cursor: pointer; }
   .app-footer { padding: 12px 14px; }
   .footer-links { gap: 10px; }
 }
+
+/* ── Fix select option backgrounds ── */
+select, select option {
+  background-color: #131c28 !important;
+  color: #e8edf5 !important;
+}
+select.field-input {
+  background: var(--bg) !important;
+  color: var(--text) !important;
+}
