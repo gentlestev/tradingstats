@@ -995,26 +995,224 @@ async function loadJournalEntries() {
   }
 
   container.innerHTML = filtered.map(e => {
-    const badge = e.result==='Win'?'badge-win':e.result==='Loss'?'badge-loss':'badge-be';
-    return `<div class="jentry" id="jcard-${e.id}" data-entry='${JSON.stringify({id:e.id,date:e.date,instrument:e.instrument,result:e.result,emotion:e.emotion,reasoning:e.reasoning,went_well:e.went_well,improve:e.improve,account_provider:e.account_provider||firmMap[e.date+"_"+e.instrument]||""}).replace(/'/g,"&#39;")}'>
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;flex-wrap:wrap;gap:6px">
-        <div><div class="jentry-date">${e.date} · <span style="color:var(--text-3)">${e.account_provider || firmMap[e.date + '_' + e.instrument] || ''}</span></div><div class="jentry-instr">${e.instrument||'—'}</div></div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+    const badge   = e.result==='Win'?'badge-win':e.result==='Loss'?'badge-loss':'badge-be';
+    const firm    = e.account_provider || firmMap[e.date+'_'+e.instrument] || '';
+    const imgKey  = 'ts_jimg_'+e.date+'_'+(e.instrument||'').replace(/\s/g,'');
+    const imgSrc  = localStorage.getItem(imgKey) || '';
+    const hasBody = e.reasoning || e.went_well || e.improve || imgSrc;
+    const entryJSON = JSON.stringify({id:e.id,date:e.date,instrument:e.instrument,result:e.result,emotion:e.emotion,reasoning:e.reasoning,went_well:e.went_well,improve:e.improve,account_provider:firm}).replace(/'/g,"&#39;");
+
+    return `<div class="jentry-card" id="jcard-${e.id}" data-entry='${entryJSON}'>
+
+      <!-- ── Collapsed header (always visible, click to expand) ── -->
+      <div class="jentry-header" onclick="toggleJEntry('${e.id}')" role="button" tabindex="0"
+        onkeydown="if(event.key==='Enter'||event.key===' ')toggleJEntry('${e.id}')">
+        <div class="jentry-header-left">
+          <div class="jentry-chevron" id="jchev-${e.id}">▶</div>
+          <div>
+            <div class="jentry-date-line">${e.date}${firm?' · <span style="color:var(--text-3);font-size:.6rem">'+firm+'</span>':''}</div>
+            <div class="jentry-instr-line">${e.instrument||'—'}</div>
+          </div>
+        </div>
+        <div class="jentry-header-right">
+          ${e.emotion?`<span class="jentry-emotion-pill">${e.emotion}</span>`:''}
           <span class="badge ${badge}">${e.result||'—'}</span>
-          ${e.emotion?`<span class="jentry-emotion">${e.emotion}</span>`:''}
-          <div style="display:flex;gap:4px">
-            <button class="btn-sm btn-outline-sm" onclick="openEditJournal('${e.id}')" style="padding:2px 9px;font-size:.62rem" title="Edit entry">✏️</button>
-            <button class="btn-sm btn-danger-sm" onclick="deleteJournalEntry('${e.id}')" style="padding:2px 9px;font-size:.62rem" title="Delete entry">🗑</button>
+          ${imgSrc?'<span style="font-size:.75rem" title="Has screenshot">📷</span>':''}
+          <div class="jentry-actions" onclick="event.stopPropagation()">
+            <button class="btn-sm btn-outline-sm" onclick="openEditJournal('${e.id}')" title="Edit">✏️</button>
+            <button class="btn-sm btn-danger-sm" onclick="deleteJournalEntry('${e.id}')" title="Delete">🗑</button>
           </div>
         </div>
       </div>
-      ${e.reasoning?`<div class="jentry-section"><div class="jentry-section-label">Why I Entered</div><div class="jentry-text">${e.reasoning}</div></div>`:''}
-      ${e.went_well?`<div class="jentry-section"><div class="jentry-section-label">What Went Well</div><div class="jentry-text">${e.went_well}</div></div>`:''}
-      ${e.improve?`<div class="jentry-section"><div class="jentry-section-label">What To Improve</div><div class="jentry-text">${e.improve}</div></div>`:''}
-      ${(()=>{const k='ts_jimg_'+e.date+'_'+(e.instrument||'').replace(/\s/g,'');const img=localStorage.getItem(k);return img?`<div class="jentry-section"><div class="jentry-section-label">Screenshot</div><img src="${img}" style="max-width:100%;max-height:200px;border-radius:6px;margin-top:4px" loading="lazy"/></div>`:'';})()}
+
+      <!-- ── Expandable body ── -->
+      <div class="jentry-body" id="jbody-${e.id}">
+        <div class="jentry-body-inner">
+          ${e.reasoning?`<div class="jentry-section"><div class="jentry-section-label">Why I Entered</div><div class="jentry-text">${e.reasoning}</div></div>`:''}
+          ${e.went_well?`<div class="jentry-section"><div class="jentry-section-label">What Went Well</div><div class="jentry-text">${e.went_well}</div></div>`:''}
+          ${e.improve?`<div class="jentry-section"><div class="jentry-section-label">What To Improve</div><div class="jentry-text">${e.improve}</div></div>`:''}
+          ${imgSrc?`
+          <div class="jentry-section">
+            <div class="jentry-section-label">Screenshot</div>
+            <div class="jentry-img-wrap" onclick="openImgLightbox('${imgKey}')" title="Click to enlarge">
+              <img src="${imgSrc}" class="jentry-img-thumb" loading="lazy" alt="Trade screenshot"/>
+              <div class="jentry-img-overlay">🔍 Click to enlarge</div>
+            </div>
+          </div>`:''}
+          ${!hasBody?'<div style="font-size:.72rem;color:var(--text-3);padding:4px 0;font-style:italic">No notes added</div>':''}
+        </div>
+      </div>
     </div>`;
   }).join('') || `<div style="text-align:center;padding:24px;color:var(--text-3);font-size:.75rem">No ${activeJournalFilter} entries found.</div>`;
 }
+// ── Toggle journal entry expand/collapse ──
+function toggleJEntry(id) {
+  const body  = document.getElementById('jbody-'  + id);
+  const chev  = document.getElementById('jchev-'  + id);
+  const card  = document.getElementById('jcard-'  + id);
+  if (!body) return;
+  const isOpen = body.classList.contains('open');
+  if (isOpen) {
+    body.classList.remove('open');
+    body.style.maxHeight = '0';
+    if (chev) { chev.textContent = '▶'; chev.style.transform = 'rotate(0deg)'; }
+    card.classList.remove('expanded');
+  } else {
+    body.classList.add('open');
+    body.style.maxHeight = body.scrollHeight + 200 + 'px';
+    if (chev) { chev.textContent = '▶'; chev.style.transform = 'rotate(90deg)'; }
+    card.classList.add('expanded');
+    // Recalculate height after images load
+    const imgs = body.querySelectorAll('img');
+    imgs.forEach(img => {
+      if (!img.complete) img.onload = () => { body.style.maxHeight = body.scrollHeight + 200 + 'px'; };
+    });
+  }
+}
+
+// ── Image lightbox ──
+let _lbZoom = 1, _lbDrag = false, _lbLast = {x:0, y:0}, _lbOffset = {x:0, y:0};
+
+function openImgLightbox(imgKey) {
+  const imgSrc = localStorage.getItem(imgKey);
+  if (!imgSrc) return;
+
+  let lb = document.getElementById('imgLightbox');
+  if (!lb) {
+    lb = document.createElement('div');
+    lb.id = 'imgLightbox';
+    lb.style.cssText = 'position:fixed;inset:0;z-index:500;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;cursor:zoom-in;user-select:none';
+    lb.innerHTML = `
+      <div id="lbInner" style="position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%">
+        <img id="lbImg" style="max-width:90vw;max-height:88vh;border-radius:8px;transform-origin:center;transition:transform .2s ease;cursor:grab;box-shadow:0 20px 60px rgba(0,0,0,.8)" draggable="false"/>
+        <!-- Controls -->
+        <div style="position:fixed;top:16px;right:16px;display:flex;gap:8px;z-index:501">
+          <button onclick="lbZoom(1)" style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;border-radius:8px;width:40px;height:40px;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s" title="Zoom in">+</button>
+          <button onclick="lbZoom(-1)" style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;border-radius:8px;width:40px;height:40px;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s" title="Zoom out">−</button>
+          <button onclick="lbReset()" style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;border-radius:8px;width:40px;height:40px;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center" title="Reset zoom">⤢</button>
+          <button onclick="closeImgLightbox()" style="background:rgba(239,68,68,.2);border:1px solid rgba(239,68,68,.4);color:#ff6b6b;border-radius:8px;width:40px;height:40px;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center" title="Close">✕</button>
+        </div>
+        <!-- Zoom hint -->
+        <div id="lbHint" style="position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.6);color:rgba(255,255,255,.6);padding:6px 16px;border-radius:20px;font-size:.7rem;font-family:'Space Mono',monospace;pointer-events:none">
+          Scroll or +/− to zoom · Drag to pan · Click outside to close
+        </div>
+        <div id="lbZoomBadge" style="position:fixed;bottom:60px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.6);color:#fff;padding:4px 12px;border-radius:10px;font-size:.7rem;font-family:'Space Mono',monospace;opacity:0;transition:opacity .3s;pointer-events:none">100%</div>
+      </div>`;
+
+    // Click backdrop to close
+    lb.addEventListener('click', (ev) => { if (ev.target === lb || ev.target === document.getElementById('lbInner')) closeImgLightbox(); });
+
+    // Mouse wheel zoom
+    lb.addEventListener('wheel', (ev) => { ev.preventDefault(); lbZoom(ev.deltaY < 0 ? 1 : -1, 0.15); }, { passive: false });
+
+    // Keyboard
+    document.addEventListener('keydown', lbKeyHandler);
+
+    // Drag to pan
+    const img = lb.querySelector('#lbImg');
+    img.addEventListener('mousedown', lbDragStart);
+    img.addEventListener('touchstart', lbDragStart, { passive: true });
+    document.addEventListener('mousemove', lbDragMove);
+    document.addEventListener('touchmove', lbDragMove, { passive: false });
+    document.addEventListener('mouseup', lbDragEnd);
+    document.addEventListener('touchend', lbDragEnd);
+
+    document.body.appendChild(lb);
+  }
+
+  // Reset state
+  _lbZoom = 1; _lbOffset = {x:0, y:0}; _lbDrag = false;
+  document.getElementById('lbImg').src = imgSrc;
+  document.getElementById('lbImg').style.transform = 'translate(0,0) scale(1)';
+  lb.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+  setTimeout(() => { document.getElementById('lbHint').style.opacity = '1'; setTimeout(() => { const h = document.getElementById('lbHint'); if(h) h.style.opacity='0'; }, 3000); }, 200);
+}
+
+function closeImgLightbox() {
+  const lb = document.getElementById('imgLightbox');
+  if (lb) lb.style.display = 'none';
+  document.body.style.overflow = '';
+  document.removeEventListener('keydown', lbKeyHandler);
+}
+
+function lbKeyHandler(ev) {
+  if (ev.key === 'Escape') closeImgLightbox();
+  if (ev.key === '=' || ev.key === '+') lbZoom(1);
+  if (ev.key === '-') lbZoom(-1);
+  if (ev.key === '0') lbReset();
+}
+
+function lbZoom(dir, step = 0.25) {
+  _lbZoom = Math.max(0.5, Math.min(6, _lbZoom + dir * step));
+  lbApplyTransform();
+  const badge = document.getElementById('lbZoomBadge');
+  if (badge) {
+    badge.textContent = Math.round(_lbZoom * 100) + '%';
+    badge.style.opacity = '1';
+    clearTimeout(badge._t);
+    badge._t = setTimeout(() => { badge.style.opacity = '0'; }, 1200);
+  }
+}
+
+function lbReset() {
+  _lbZoom = 1; _lbOffset = {x:0, y:0};
+  lbApplyTransform();
+}
+
+function lbApplyTransform() {
+  const img = document.getElementById('lbImg');
+  if (img) {
+    img.style.transform = `translate(${_lbOffset.x}px, ${_lbOffset.y}px) scale(${_lbZoom})`;
+    img.style.cursor = _lbZoom > 1 ? 'grab' : 'zoom-in';
+  }
+}
+
+function lbDragStart(ev) {
+  if (_lbZoom <= 1) return;
+  _lbDrag = true;
+  const pt = ev.touches ? ev.touches[0] : ev;
+  _lbLast = { x: pt.clientX - _lbOffset.x, y: pt.clientY - _lbOffset.y };
+  document.getElementById('lbImg').style.cursor = 'grabbing';
+  document.getElementById('lbImg').style.transition = 'none';
+}
+
+function lbDragMove(ev) {
+  if (!_lbDrag) return;
+  if (ev.cancelable) ev.preventDefault();
+  const pt = ev.touches ? ev.touches[0] : ev;
+  _lbOffset.x = pt.clientX - _lbLast.x;
+  _lbOffset.y = pt.clientY - _lbLast.y;
+  const img = document.getElementById('lbImg');
+  if (img) img.style.transform = `translate(${_lbOffset.x}px,${_lbOffset.y}px) scale(${_lbZoom})`;
+}
+
+function lbDragEnd() {
+  if (!_lbDrag) return;
+  _lbDrag = false;
+  const img = document.getElementById('lbImg');
+  if (img) { img.style.cursor = 'grab'; img.style.transition = 'transform .1s ease'; }
+}
+
+// ── Pinch to zoom (mobile) ──
+let _lbPinchDist = 0;
+document.addEventListener('touchstart', ev => {
+  if (!document.getElementById('imgLightbox') || document.getElementById('imgLightbox').style.display === 'none') return;
+  if (ev.touches.length === 2) {
+    _lbPinchDist = Math.hypot(ev.touches[0].clientX - ev.touches[1].clientX, ev.touches[0].clientY - ev.touches[1].clientY);
+  }
+}, { passive: true });
+document.addEventListener('touchmove', ev => {
+  if (!document.getElementById('imgLightbox') || document.getElementById('imgLightbox').style.display === 'none') return;
+  if (ev.touches.length === 2) {
+    const d = Math.hypot(ev.touches[0].clientX - ev.touches[1].clientX, ev.touches[0].clientY - ev.touches[1].clientY);
+    const delta = (d - _lbPinchDist) * 0.01;
+    _lbPinchDist = d;
+    _lbZoom = Math.max(0.5, Math.min(6, _lbZoom + delta));
+    lbApplyTransform();
+  }
+}, { passive: true });
+
 // ── Open edit modal ──
 function openEditJournal(id) {
   // Read entry data from the card's data attribute — no extra DB call needed
