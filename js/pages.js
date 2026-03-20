@@ -526,14 +526,18 @@ let journalFormState = { open: false, date: '', instrument: '', result: '', emot
 
 function saveJournalFormState() {
   const overlay = document.getElementById('newJournalOverlay');
-  journalFormState.open       = overlay ? overlay.style.display !== 'none' : false;
-  journalFormState.date       = document.getElementById('jDate')?.value || '';
-  journalFormState.instrument = document.getElementById('jInstrument')?.value || '';
-  journalFormState.result     = document.getElementById('jResult')?.value || '';
-  journalFormState.reason     = document.getElementById('jReason')?.value || '';
-  journalFormState.well       = document.getElementById('jWell')?.value || '';
-  journalFormState.improve    = document.getElementById('jImprove')?.value || '';
-  journalFormState.emotion    = activeJournalEmotions[activeFirm] || '';
+  if (!overlay || overlay.style.display === 'none' || overlay.style.display === '') {
+    journalFormState.open = false;
+    return;
+  }
+  journalFormState.open       = true;
+  journalFormState.date       = document.getElementById('jDate')?.value       || '';
+  journalFormState.instrument = document.getElementById('jInstrument')?.value  || '';
+  journalFormState.result     = document.getElementById('jResult')?.value      || '';
+  journalFormState.reason     = document.getElementById('jReason')?.value      || '';
+  journalFormState.well       = document.getElementById('jWell')?.value        || '';
+  journalFormState.improve    = document.getElementById('jImprove')?.value     || '';
+  journalFormState.emotion    = activeJournalEmotions[activeFirm]              || '';
 }
 
 function restoreJournalFormState() {
@@ -580,11 +584,7 @@ function renderJournal() {
 
   <div id="journalEntries"><div class="shimmer" style="height:100px;margin-bottom:10px"></div></div>
   `;
-  // Set today's date only if no saved state
-  if (!journalFormState.date) {
-    document.getElementById('jDate').value = new Date().toISOString().split('T')[0];
-  }
-  restoreJournalFormState();
+  // Date is set inside openJournalModal() — no DOM access needed here
   loadJournalEntries();
 }
 
@@ -650,9 +650,11 @@ function preSelectJFirm(firm) {
 }
 
 function openJournalModal() {
-  let overlay = document.getElementById('newJournalOverlay');
-  if (!overlay) buildJournalModal();
-  overlay = document.getElementById('newJournalOverlay');
+  // Always rebuild modal so instrument list reflects current firm
+  const existing = document.getElementById('newJournalOverlay');
+  if (existing) existing.remove();
+  buildJournalModal();
+  const overlay = document.getElementById('newJournalOverlay');
   overlay.style.display = 'flex';
   // Set today's date
   const dateEl = document.getElementById('jDate');
@@ -949,7 +951,7 @@ async function loadJournalEntries() {
   try {
     const { data: rd } = await sb.from('journal_entries')
       .select('*').eq('user_id', currentUser.id)
-      .order('date', { ascending: false });
+      .order('created_at', { ascending: false });
     remoteData = rd || [];
   } catch(e) { remoteData = []; }
 
@@ -959,21 +961,39 @@ async function loadJournalEntries() {
   const data = [...localEntries, ...remoteData];
   const container = document.getElementById('journalEntries');
   if (!container) return;
-  if (!data?.length) { container.innerHTML = `<div class="empty-state"><div class="empty-icon">📝</div><div class="empty-title">No journal entries yet</div><div class="empty-sub">Start journaling to build your trading psychology insights.</div></div>`; return; }
-  // Filter by firm — show entry if:
-  // 1. account_provider matches, OR
-  // 2. firmMap (localStorage) matches, OR
-  // 3. account_provider is null/empty AND firmMap has no record → show it (don't lose entries)
+  if (!data?.length) {
+    container.innerHTML = `<div class="empty-state">
+      <div class="empty-icon">📝</div>
+      <div class="empty-title">No journal entries yet</div>
+      <div class="empty-sub">Click <strong>+ New Entry</strong> to start journaling your trades.</div>
+    </div>`;
+    return;
+  }
+  // Filter by firm
+  // Show ALL entries when activeFirm is 'All'
+  // For specific firm: match account_provider OR firmMap OR show if no firm info at all
   const firmFiltered = (activeFirm === 'All') ? data : data.filter(e => {
     const dbFirm    = (e.account_provider || '').trim();
     const localFirm = (firmMap[e.date + '_' + e.instrument] || '').trim();
-    // Has a firm value → must match
     if (dbFirm)    return dbFirm    === activeFirm;
     if (localFirm) return localFirm === activeFirm;
-    // No firm info anywhere → show in ALL and in the active firm (don't hide it)
-    return true;
+    return true; // No firm stored anywhere → always show
   });
+
+  // If filtering hid ALL entries but data has entries → show a hint
+  const hiddenCount = data.length - firmFiltered.length;
   const filtered = firmFiltered.filter(e => { if(activeJournalFilter==='all')return true; if(activeJournalFilter==='win')return e.result==='Win'; if(activeJournalFilter==='loss')return e.result==='Loss'; if(activeJournalFilter==='be')return e.result==='Break Even'; return true; });
+  // If firm filter hid entries, show a helpful message
+  if (firmFiltered.length === 0 && data.length > 0) {
+    container.innerHTML = `<div class="empty-state">
+      <div class="empty-icon">🔍</div>
+      <div class="empty-title">No entries for ${activeFirm}</div>
+      <div class="empty-sub">You have ${data.length} journal ${data.length===1?'entry':'entries'} saved but none are tagged to ${activeFirm}.<br>Switch to <strong>All</strong> in the sidebar to see all your entries.</div>
+      <button class="btn-primary" onclick="setFirm('All',document.querySelector('.acct-pill:last-child'))" style="width:auto;margin:0 auto;padding:8px 20px">View All Entries →</button>
+    </div>`;
+    return;
+  }
+
   container.innerHTML = filtered.map(e => {
     const badge = e.result==='Win'?'badge-win':e.result==='Loss'?'badge-loss':'badge-be';
     return `<div class="jentry" id="jcard-${e.id}" data-entry='${JSON.stringify({id:e.id,date:e.date,instrument:e.instrument,result:e.result,emotion:e.emotion,reasoning:e.reasoning,went_well:e.went_well,improve:e.improve,account_provider:e.account_provider||firmMap[e.date+"_"+e.instrument]||""}).replace(/'/g,"&#39;")}'>
