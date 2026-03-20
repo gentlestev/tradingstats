@@ -525,7 +525,8 @@ let activeJournalEmotions = {};
 let journalFormState = { open: false, date: '', instrument: '', result: '', emotion: '', reason: '', well: '', improve: '' };
 
 function saveJournalFormState() {
-  journalFormState.open       = document.getElementById('newEntryForm')?.style.display !== 'none';
+  const overlay = document.getElementById('newJournalOverlay');
+  journalFormState.open       = overlay ? overlay.style.display !== 'none' : false;
   journalFormState.date       = document.getElementById('jDate')?.value || '';
   journalFormState.instrument = document.getElementById('jInstrument')?.value || '';
   journalFormState.result     = document.getElementById('jResult')?.value || '';
@@ -537,18 +538,22 @@ function saveJournalFormState() {
 
 function restoreJournalFormState() {
   if (!journalFormState.open) return;
-  const form = document.getElementById('newEntryForm');
-  const btn  = document.getElementById('newEntryBtn');
-  if (form) form.style.display = 'block';
-  if (btn)  btn.textContent = '✕ Cancel';
+  // Re-open modal with saved state
+  openJournalModal();
+  // Restore field values
   const fields = { jDate: 'date', jInstrument: 'instrument', jResult: 'result', jReason: 'reason', jWell: 'well', jImprove: 'improve' };
-  Object.entries(fields).forEach(([id, key]) => { const el = document.getElementById(id); if (el && journalFormState[key]) el.value = journalFormState[key]; });
-  if (journalFormState.emotion) {
-    activeJournalEmotions[activeFirm] = journalFormState.emotion;
-    document.querySelectorAll('.emotion-btn').forEach(b => { if (b.textContent.trim() === journalFormState.emotion.trim()) b.classList.add('selected'); });
-  }
-  // Restore firm selections
-  setTimeout(() => preSelectJFirm(activeFirm), 30);
+  setTimeout(() => {
+    Object.entries(fields).forEach(([id, key]) => {
+      const el = document.getElementById(id);
+      if (el && journalFormState[key]) el.value = journalFormState[key];
+    });
+    if (journalFormState.emotion) {
+      activeJournalEmotions[activeFirm] = journalFormState.emotion;
+      document.querySelectorAll('#newJournalOverlay .emotion-btn').forEach(b => {
+        if (b.textContent.trim() === journalFormState.emotion.trim()) b.classList.add('selected');
+      });
+    }
+  }, 80);
 }
 
 function renderJournal() {
@@ -560,70 +565,10 @@ function renderJournal() {
   c.innerHTML = `
   <div class="section-header mb-4">
     <div><div class="section-title">Trading Journal</div><div class="section-sub">Document your trades and mindset</div></div>
-    <button class="btn-sm btn-primary-sm" id="newEntryBtn" onclick="toggleNewEntry()">+ New Entry</button>
+    <button class="btn-sm btn-primary-sm" onclick="openJournalModal()">+ New Entry</button>
   </div>
 
-  <!-- New Entry Form -->
-  <div id="newEntryForm" style="display:none;margin-bottom:20px">
-    <div class="chart-card">
-      <div class="chart-card-header"><div class="chart-card-title">New Journal Entry</div><button onclick="toggleNewEntry()" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:18px">✕</button></div>
-      <div class="chart-body">
-        <div class="col-3 mb-4" style="gap:12px">
-          <div class="field-group"><label class="field-label">Date</label><input type="date" class="field-input" id="jDate"/></div>
-          <div class="field-group"><label class="field-label">Instrument</label><select class="field-input" id="jInstrument" style="background:var(--bg);color:var(--text)">${instOptions}</select></div>
-          <div class="field-group"><label class="field-label">Result</label><select class="field-input" id="jResult"><option value="">Select…</option><option>Win</option><option>Loss</option><option>Break Even</option></select></div>
-        </div>
 
-        <!-- Save to which firms -->
-        <div class="field-group mb-4">
-          <label class="field-label">Save to Firms</label>
-          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px" id="jFirmChecks">
-            ${['Deriv','FTMO','The5ers','Other'].map(f => `
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 14px;border-radius:20px;border:1.5px solid var(--border);background:var(--surface2);transition:all .18s;user-select:none"
-                id="jfirm_label_${f}"
-                onclick="toggleJFirm('${f}',this)">
-                <span style="width:14px;height:14px;border-radius:3px;border:1.5px solid var(--border2);background:var(--bg);display:inline-flex;align-items:center;justify-content:center;font-size:.6rem;flex-shrink:0;transition:all .18s" id="jfirm_check_${f}"></span>
-                <span style="font-size:.75rem;font-weight:600;color:var(--text-3);transition:color .18s" id="jfirm_txt_${f}">${f}</span>
-                <input type="checkbox" id="jfirm_${f}" value="${f}" style="display:none"/>
-              </label>
-            `).join('')}
-          </div>
-          <div style="font-size:.62rem;color:var(--text-3);margin-top:6px;font-family:var(--f-mono)">
-            Select one or more firms — the entry will appear in each selected firm's journal
-          </div>
-        </div>
-        <div class="field-group mb-4"><label class="field-label">How were you feeling before this trade?</label>
-          <div class="emotion-grid" style="margin-top:6px">
-            ${['😌 Calm','💪 Confident','😰 FOMO','😤 Revenge','😟 Anxious','😑 Bored'].map(e=>
-              `<button class="emotion-btn" onclick="selectEmotion(this,'${e}')">${e}</button>`
-            ).join('')}
-          </div>
-        </div>
-        <div class="col-3 mb-4" style="gap:12px">
-          <div class="field-group"><label class="field-label">Why I Entered</label><textarea class="field-input field-textarea" id="jReason" placeholder="Setup, confluences…" style="min-height:80px"></textarea></div>
-          <div class="field-group"><label class="field-label">What Went Well</label><textarea class="field-input field-textarea" id="jWell" placeholder="Discipline, execution…" style="min-height:80px"></textarea></div>
-          <div class="field-group"><label class="field-label">What To Improve</label><textarea class="field-input field-textarea" id="jImprove" placeholder="Mistakes, lessons…" style="min-height:80px"></textarea></div>
-        </div>
-        <!-- Screenshot upload -->
-        <div class="field-group mb-4">
-          <label class="field-label">Trade Screenshot (optional)</label>
-          <div id="jImgDrop" style="border:2px dashed var(--border2);border-radius:8px;padding:18px;text-align:center;cursor:pointer;transition:all .2s"
-            onclick="document.getElementById('jImgInput').click()"
-            ondragover="event.preventDefault();this.style.borderColor='var(--brand)'"
-            ondragleave="this.style.borderColor='var(--border2)'"
-            ondrop="handleJournalImgDrop(event)">
-            <div id="jImgPreview" style="display:none;margin-bottom:8px">
-              <img id="jImgThumb" style="max-height:120px;border-radius:6px;max-width:100%" alt="preview"/>
-            </div>
-            <div id="jImgLabel" style="font-size:.75rem;color:var(--text-3)">📷 Drop screenshot or click to upload</div>
-          </div>
-          <input type="file" id="jImgInput" accept="image/*" style="display:none" onchange="handleJournalImgSelect(this.files)"/>
-          <button id="jImgClear" style="display:none;margin-top:6px;background:none;border:none;color:var(--red);font-size:.7rem;cursor:pointer" onclick="clearJournalImg()">✕ Remove image</button>
-        </div>
-        <button class="btn-sm btn-success-sm" onclick="saveJournalEntry()" style="width:100%;padding:10px">Save Journal Entry</button>
-      </div>
-    </div>
-  </div>
 
   <!-- Filters -->
   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">
@@ -704,19 +649,145 @@ function preSelectJFirm(firm) {
   });
 }
 
-function toggleNewEntry() {
-  const f = document.getElementById('newEntryForm');
-  const b = document.getElementById('newEntryBtn');
-  const open = f.style.display === 'none';
-  f.style.display = open ? 'block' : 'none';
-  b.textContent = open ? '✕ Cancel' : '+ New Entry';
-  if (open) {
-    f.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    document.getElementById('jDate').focus();
-    // Auto-select the current active firm
-    setTimeout(() => preSelectJFirm(activeFirm), 30);
-  }
+function openJournalModal() {
+  let overlay = document.getElementById('newJournalOverlay');
+  if (!overlay) buildJournalModal();
+  overlay = document.getElementById('newJournalOverlay');
+  overlay.style.display = 'flex';
+  // Set today's date
+  const dateEl = document.getElementById('jDate');
+  if (dateEl && !dateEl.value) dateEl.value = new Date().toISOString().split('T')[0];
+  // Auto-select active firm
+  setTimeout(() => preSelectJFirm(activeFirm), 30);
+  // Focus date
+  setTimeout(() => { document.getElementById('jDate')?.focus(); }, 60);
 }
+
+function closeJournalModal() {
+  const overlay = document.getElementById('newJournalOverlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function buildJournalModal() {
+  // Build instrument options from current firm trades
+  const firmTrades = getTradesForFirm(activeFirm);
+  const instruments = [...new Set(firmTrades.map(t => t.instrument).filter(Boolean))];
+  const instOptions = `<option value="" style="background:#131c28;color:#e8edf5">Select instrument…</option>`
+    + instruments.map(i => `<option style="background:#131c28;color:#e8edf5">${i}</option>`).join('')
+    + `<option style="background:#131c28;color:#e8edf5">Other</option>`;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'newJournalOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.75);backdrop-filter:blur(6px);display:none;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto';
+  overlay.onclick = (e) => { if (e.target === overlay) closeJournalModal(); };
+
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border:1.5px solid var(--border2);border-radius:14px;width:720px;max-width:100%;margin:auto;box-shadow:0 20px 60px rgba(0,0,0,.7);animation:scaleIn .22s ease both">
+
+      <!-- Header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 22px;border-bottom:1px solid var(--border);background:var(--surface2);border-radius:14px 14px 0 0;position:sticky;top:0;z-index:1">
+        <div>
+          <div style="font-family:var(--f-disp);font-size:1.2rem;font-weight:800;color:var(--text)">New Journal Entry</div>
+          <div style="font-size:.65rem;color:var(--text-3);font-family:var(--f-mono);margin-top:2px">Your data saves to all selected firms</div>
+        </div>
+        <button onclick="closeJournalModal()" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:22px;line-height:1;padding:4px" title="Close">✕</button>
+      </div>
+
+      <!-- Body -->
+      <div style="padding:20px 22px;display:flex;flex-direction:column;gap:16px">
+
+        <!-- Row 1: Date / Instrument / Result -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+          <div class="field-group">
+            <label class="field-label">Date</label>
+            <input type="date" class="field-input" id="jDate"/>
+          </div>
+          <div class="field-group">
+            <label class="field-label">Instrument</label>
+            <select class="field-input" id="jInstrument" style="background:var(--bg);color:var(--text)">${instOptions}</select>
+          </div>
+          <div class="field-group">
+            <label class="field-label">Result</label>
+            <select class="field-input" id="jResult" style="background:var(--bg);color:var(--text)">
+              <option value="" style="background:#131c28">Select…</option>
+              <option style="background:#131c28;color:#e8edf5">Win</option>
+              <option style="background:#131c28;color:#e8edf5">Loss</option>
+              <option style="background:#131c28;color:#e8edf5">Break Even</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Save to firms -->
+        <div class="field-group">
+          <label class="field-label">Save to Firms <span style="color:var(--text-3);font-weight:400">(select all that apply)</span></label>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:7px">
+            ${['Deriv','FTMO','The5ers','Other'].map(f => `
+              <label style="display:flex;align-items:center;gap:7px;cursor:pointer;padding:7px 14px;border-radius:20px;border:1.5px solid var(--border);background:var(--surface2);transition:all .18s;user-select:none" id="jfirm_label_${f}" onclick="toggleJFirm('${f}',this)">
+                <span style="width:15px;height:15px;border-radius:3px;border:1.5px solid var(--border2);background:var(--bg);display:inline-flex;align-items:center;justify-content:center;font-size:.65rem;flex-shrink:0;transition:all .18s;font-weight:700" id="jfirm_check_${f}"></span>
+                <span style="font-size:.78rem;font-weight:600;color:var(--text-3);transition:color .18s" id="jfirm_txt_${f}">${f}</span>
+                <input type="checkbox" id="jfirm_${f}" value="${f}" style="display:none"/>
+              </label>`).join('')}
+          </div>
+          <div style="font-size:.6rem;color:var(--text-4);margin-top:5px;font-family:var(--f-mono)">Tick multiple firms to save this entry across all of them at once</div>
+        </div>
+
+        <!-- Emotion -->
+        <div class="field-group">
+          <label class="field-label">How were you feeling?</label>
+          <div class="emotion-grid" style="margin-top:7px">
+            ${['😌 Calm','💪 Confident','😰 FOMO','😤 Revenge','😟 Anxious','😑 Bored'].map(e =>
+              `<button class="emotion-btn" onclick="selectEmotion(this,'${e}')">${e}</button>`
+            ).join('')}
+          </div>
+        </div>
+
+        <!-- Notes 3-col -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+          <div class="field-group">
+            <label class="field-label">Why I Entered</label>
+            <textarea class="field-input field-textarea" id="jReason" placeholder="Setup, confluences, POI…" style="min-height:90px;resize:vertical"></textarea>
+          </div>
+          <div class="field-group">
+            <label class="field-label">What Went Well</label>
+            <textarea class="field-input field-textarea" id="jWell" placeholder="Discipline, patience, execution…" style="min-height:90px;resize:vertical"></textarea>
+          </div>
+          <div class="field-group">
+            <label class="field-label">What To Improve</label>
+            <textarea class="field-input field-textarea" id="jImprove" placeholder="Mistakes, lessons learned…" style="min-height:90px;resize:vertical"></textarea>
+          </div>
+        </div>
+
+        <!-- Screenshot -->
+        <div class="field-group">
+          <label class="field-label">Trade Screenshot <span style="color:var(--text-4);font-weight:400">(optional)</span></label>
+          <div id="jImgDrop" style="border:2px dashed var(--border2);border-radius:8px;padding:20px;text-align:center;cursor:pointer;transition:all .2s"
+            onclick="document.getElementById('jImgInput').click()"
+            ondragover="event.preventDefault();this.style.borderColor='var(--brand)';this.style.background='rgba(79,142,247,.04)'"
+            ondragleave="this.style.borderColor='var(--border2)';this.style.background=''"
+            ondrop="handleJournalImgDrop(event)">
+            <div id="jImgPreview" style="display:none;margin-bottom:8px">
+              <img id="jImgThumb" style="max-height:130px;border-radius:6px;max-width:100%" alt="preview"/>
+            </div>
+            <div id="jImgLabel" style="font-size:.78rem;color:var(--text-3)">📷 Drop screenshot here or tap to upload</div>
+          </div>
+          <input type="file" id="jImgInput" accept="image/*" style="display:none" onchange="handleJournalImgSelect(this.files)"/>
+          <button id="jImgClear" style="display:none;margin-top:6px;background:none;border:none;color:var(--red);font-size:.7rem;cursor:pointer;font-family:var(--f-mono)" onclick="clearJournalImg()">✕ Remove image</button>
+        </div>
+
+        <!-- Actions -->
+        <div style="display:flex;gap:10px;padding-top:4px">
+          <button class="btn-ghost" onclick="closeJournalModal()" style="flex:1">Cancel</button>
+          <button class="btn-primary" id="saveJournalBtn" onclick="saveJournalEntry()" style="flex:2;width:auto;padding:11px">💾 Save Journal Entry</button>
+        </div>
+
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+// Keep toggleNewEntry as alias for backward compat
+function toggleNewEntry() { openJournalModal(); }
 function selectEmotion(btn, em) {
   document.querySelectorAll('.emotion-btn').forEach(b => b.classList.remove('selected'));
   btn.classList.add('selected');
@@ -867,8 +938,7 @@ async function saveJournalEntry() {
     if (tick)  { tick.textContent=''; tick.style.background='var(--bg)'; tick.style.borderColor='var(--border2)'; }
     if (txt)   { txt.style.color='var(--text-3)'; }
   });
-  document.getElementById('newEntryForm').style.display = 'none';
-  document.getElementById('newEntryBtn').textContent = '+ New Entry';
+  closeJournalModal();
   loadJournalEntries();
 }
 async function loadJournalEntries() {
@@ -890,10 +960,18 @@ async function loadJournalEntries() {
   const container = document.getElementById('journalEntries');
   if (!container) return;
   if (!data?.length) { container.innerHTML = `<div class="empty-state"><div class="empty-icon">📝</div><div class="empty-title">No journal entries yet</div><div class="empty-sub">Start journaling to build your trading psychology insights.</div></div>`; return; }
-  // Filter by firm (use account_provider column if available, else firmMap from localStorage)
+  // Filter by firm — show entry if:
+  // 1. account_provider matches, OR
+  // 2. firmMap (localStorage) matches, OR
+  // 3. account_provider is null/empty AND firmMap has no record → show it (don't lose entries)
   const firmFiltered = (activeFirm === 'All') ? data : data.filter(e => {
-    const eFirm = e.account_provider || firmMap[e.date + '_' + e.instrument] || 'Other';
-    return eFirm === activeFirm;
+    const dbFirm    = (e.account_provider || '').trim();
+    const localFirm = (firmMap[e.date + '_' + e.instrument] || '').trim();
+    // Has a firm value → must match
+    if (dbFirm)    return dbFirm    === activeFirm;
+    if (localFirm) return localFirm === activeFirm;
+    // No firm info anywhere → show in ALL and in the active firm (don't hide it)
+    return true;
   });
   const filtered = firmFiltered.filter(e => { if(activeJournalFilter==='all')return true; if(activeJournalFilter==='win')return e.result==='Win'; if(activeJournalFilter==='loss')return e.result==='Loss'; if(activeJournalFilter==='be')return e.result==='Break Even'; return true; });
   container.innerHTML = filtered.map(e => {
