@@ -1014,80 +1014,114 @@ function clearJournalImg() {
 
 async function saveJournalEntry() {
   if (!currentUser) { showToast('Sign in first', 'error'); return; }
-  const date = document.getElementById('jDate').value;
-  const instrument = document.getElementById('jInstrument').value;
-  const result = document.getElementById('jResult').value;
-  if (!date || !instrument || !result) { showToast('Date, instrument and result required', 'error'); return; }
-  const emotion = activeJournalEmotions[activeFirm] || '';
+  const date       = document.getElementById('jDate')?.value?.trim();
+  const instrument = document.getElementById('jInstrument')?.value?.trim();
+  const result     = document.getElementById('jResult')?.value?.trim();
+  if (!date || !instrument || !result) {
+    showToast('Date, instrument and result are required', 'error'); return;
+  }
+  const emotion    = activeJournalEmotions[activeFirm] || '';
   const reasonVal  = document.getElementById('jReason')?.value  || '';
   const wellVal    = document.getElementById('jWell')?.value    || '';
   const improveVal = document.getElementById('jImprove')?.value || '';
 
-  // Get selected firms — default to activeFirm if none ticked
+  // Get selected firms
   const selectedFirms = getSelectedJFirms();
-  const firmsToSave   = selectedFirms.length > 0 ? selectedFirms : [activeFirm === 'All' ? 'Other' : activeFirm];
+  const firmsToSave   = selectedFirms.length > 0
+    ? selectedFirms
+    : [activeFirm === 'All' ? 'Other' : activeFirm];
 
-  const btn = document.querySelector('#newEntryForm .btn-sm.btn-success-sm');
-  if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
+  // Update save button
+  const saveBtn = document.getElementById('saveJournalBtn');
+  if (saveBtn) { saveBtn.textContent = '⏳ Saving…'; saveBtn.disabled = true; }
 
-  let totalSaved = 0;
-  let lastErr    = null;
+  let supabaseSaved = 0;
+  let localSaved    = 0;
+  let lastErr       = null;
 
-  // ── Save one entry per selected firm ──
   for (const firmVal of firmsToSave) {
-    const baseEntry = {
-      user_id: currentUser.id, date, instrument, result, emotion,
-      reasoning: reasonVal, went_well: wellVal, improve: improveVal
+    // Full entry payload matching the SQL table we created
+    const entry = {
+      user_id:          currentUser.id,
+      date:             date,
+      instrument:       instrument,
+      result:           result,
+      emotion:          emotion,
+      reasoning:        reasonVal,
+      went_well:        wellVal,
+      improve:          improveVal,
+      account_provider: firmVal
     };
 
-    // Try with account_provider, fallback without
-    let { error } = await sb.from('journal_entries').insert({ ...baseEntry, account_provider: firmVal });
-    if (error) {
-      const retry = await sb.from('journal_entries').insert(baseEntry);
-      error = retry.error;
-      if (!error) {
-        // Store firm locally
-        const firmMap = JSON.parse(localStorage.getItem('ts_jfirm') || '{}');
-        firmMap[date + '_' + instrument + '_' + firmVal] = firmVal;
-        firmMap[date + '_' + instrument] = firmVal;
-        try { localStorage.setItem('ts_jfirm', JSON.stringify(firmMap)); } catch(e) {}
+    console.log('Saving journal entry to Supabase:', entry);
+
+    const { data, error } = await sb.from('journal_entries').insert(entry).select();
+
+    if (!error) {
+      supabaseSaved++;
+      console.log('Journal saved to Supabase:', data);
+    } else {
+      console.error('Supabase journal save error:', error);
+      lastErr = error;
+
+      // If account_provider column missing, try without it
+      if (error.message && error.message.toLowerCase().includes('account_provider')) {
+        const { error: e2 } = await sb.from('journal_entries').insert({
+          user_id: currentUser.id, date, instrument, result, emotion,
+          reasoning: reasonVal, went_well: wellVal, improve: improveVal
+        });
+        if (!e2) {
+          supabaseSaved++;
+          // Track firm in localStorage
+          const fm = JSON.parse(localStorage.getItem('ts_jfirm') || '{}');
+          fm[date+'_'+instrument] = firmVal;
+          try { localStorage.setItem('ts_jfirm', JSON.stringify(fm)); } catch(_) {}
+          lastErr = null;
+        } else {
+          lastErr = e2;
+        }
+      }
+
+      // If still failed — save to localStorage so nothing is lost
+      if (lastErr) {
+        const localJournal = JSON.parse(localStorage.getItem('ts_local_journal') || '[]');
+        localJournal.unshift({
+          id: 'local_' + Date.now() + '_' + firmVal,
+          date, instrument, result, emotion,
+          reasoning: reasonVal, went_well: wellVal, improve: improveVal,
+          account_provider: firmVal,
+          created_at: new Date().toISOString(),
+          _local: true
+        });
+        try {
+          localStorage.setItem('ts_local_journal', JSON.stringify(localJournal));
+          localSaved++;
+        } catch(_) {}
       }
     }
 
-    if (!error) {
-      totalSaved++;
-    } else {
-      lastErr = error;
-      // Supabase failing entirely — save locally
-      const localJournal = JSON.parse(localStorage.getItem('ts_local_journal') || '[]');
-      localJournal.unshift({
-        id: 'local_' + Date.now() + '_' + firmVal,
-        date, instrument, result, emotion,
-        reasoning: reasonVal, went_well: wellVal, improve: improveVal,
-        account_provider: firmVal,
-        created_at: new Date().toISOString(),
-        _local: true
-      });
-      try { localStorage.setItem('ts_local_journal', JSON.stringify(localJournal)); totalSaved++; } catch(e) {}
-    }
-
-    // Small delay between inserts to avoid rate limiting
-    if (firmsToSave.length > 1) await new Promise(r => setTimeout(r, 120));
+    if (firmsToSave.length > 1) await new Promise(r => setTimeout(r, 100));
   }
 
-  if (btn) { btn.textContent = 'Save Journal Entry'; btn.disabled = false; }
+  if (saveBtn) { saveBtn.textContent = '💾 Save Journal Entry'; saveBtn.disabled = false; }
 
-  if (totalSaved === 0) {
-    showToast('Could not save: ' + (lastErr?.message || 'Unknown error'), 'error');
+  const total = supabaseSaved + localSaved;
+  if (total === 0) {
+    showToast('Save failed: ' + (lastErr?.message || 'Unknown error. Check Supabase setup.'), 'error');
     return;
   }
 
-  const firmNames = firmsToSave.join(', ');
-  const msg = firmsToSave.length > 1
-    ? `✅ Saved to ${firmsToSave.length} firms: ${firmNames}`
-    : `✅ Journal entry saved to ${firmsToSave[0]}!`;
-  showToast(msg, 'success');
-  showToast('Journal entry saved!', 'success');
+  let msg = '';
+  if (supabaseSaved > 0 && firmsToSave.length > 1) {
+    msg = `✅ Saved to ${firmsToSave.length} firms (synced across devices)`;
+  } else if (supabaseSaved > 0) {
+    msg = `✅ Saved to ${firmsToSave[0]} — synced across all devices`;
+  } else {
+    msg = `⚠️ Saved locally only (${localSaved} firm${localSaved>1?'s':''}). Run SQL in Help to sync across devices.`;
+    showToast(msg, 'error');
+    // Still continue to clear the form
+  }
+  if (supabaseSaved > 0) showToast(msg, 'success');
   // Store image locally if provided
   if (journalImgData) {
     const imgKey = 'ts_jimg_' + date + '_' + instrument.replace(/\s/g,'');
@@ -1698,82 +1732,6 @@ function renderHelp() {
       <div class="chart-body" style="font-size:.78rem;line-height:1.8;color:var(--text-2)">
         The Stats Score (0–100) grades your overall trading health across Win Rate, Profit Factor, RRR, and Expectancy.<br><br>
         <strong style="color:var(--green)">80–100: Elite</strong> · <strong style="color:var(--brand-l)">65–79: Strong</strong> · <strong style="color:var(--amber)">50–64: Developing</strong> · <strong style="color:var(--red)">0–49: Needs work</strong>
-      </div>
-    </div>
-    <div class="chart-card mb-4">
-      <div class="chart-card-header"><div class="chart-card-title">🗄️ Fix Journal — Supabase Table Setup</div><span style="font-size:.65rem;color:var(--amber);font-family:var(--f-mono);background:rgba(245,166,35,.1);padding:2px 8px;border-radius:4px">Run this if journal save fails</span></div>
-      <div class="chart-body">
-        <p style="font-size:.78rem;color:var(--text-2);margin-bottom:12px;line-height:1.7">If you get errors like <strong style="color:var(--red)">"could not find the date column"</strong> or <strong style="color:var(--red)">"account_provider column"</strong>, your Supabase <code style="background:var(--bg);padding:2px 6px;border-radius:4px;font-family:var(--f-mono);font-size:.75rem">journal_entries</code> table needs to be created or updated. Go to your Supabase project → SQL Editor → paste and run this:</p>
-        <div style="background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:16px;font-family:var(--f-mono);font-size:.7rem;color:var(--green);line-height:1.9;overflow-x:auto;white-space:pre">-- Run this in Supabase SQL Editor
--- Go to: supabase.com → your project → SQL Editor
-
-CREATE TABLE IF NOT EXISTS journal_entries (
-  id               uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id          uuid REFERENCES auth.users(id) ON DELETE CASCADE,
-  date             date NOT NULL,
-  instrument       text,
-  result           text,
-  emotion          text,
-  reasoning        text,
-  went_well        text,
-  improve          text,
-  account_provider text,
-  created_at       timestamptz DEFAULT now()
-);
-
--- Enable Row Level Security
-ALTER TABLE journal_entries ENABLE ROW LEVEL SECURITY;
-
--- Allow users to only see their own entries
-CREATE POLICY IF NOT EXISTS "Users see own journal entries"
-  ON journal_entries FOR ALL
-  USING (auth.uid() = user_id);
-
--- Add account_provider if table already exists but column is missing
-ALTER TABLE journal_entries
-  ADD COLUMN IF NOT EXISTS account_provider text;
-
--- Add date column if missing (in case table was created differently)  
-ALTER TABLE journal_entries
-  ADD COLUMN IF NOT EXISTS date date;</div>
-        <p style="font-size:.72rem;color:var(--text-3);margin-top:10px;font-family:var(--f-mono)">After running → refresh this page → journal saving will work ✅</p>
-        <p style="font-size:.72rem;color:var(--brand);margin-top:6px;font-family:var(--f-mono)">⚡ Until you run the SQL, entries are saved locally on this device and still appear in your journal.</p>
-      </div>
-    </div>
-
-    <div style="text-align:center;margin-top:28px;padding:20px;background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r)">
-      <div style="font-family:var(--f-disp);font-size:1.1rem;font-weight:800;margin-bottom:4px;background:linear-gradient(135deg,var(--brand-l),var(--green));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">TradingStats</div>
-      <div style="font-size:.7rem;color:var(--text-3)">Built by <strong style="color:var(--green)">Osita Onyeje</strong> · <a href="mailto:nwaogalanyapaulinus@gmail.com" style="color:var(--text-3)">nwaogalanyapaulinus@gmail.com</a> · © 2026</div>
-    <div class="chart-card mb-4">
-      <div class="chart-card-header">
-        <div class="chart-card-title">🗄️ Fix Journal — Supabase Table Setup</div>
-        <span style="font-size:.65rem;color:var(--amber);font-family:var(--f-mono);background:rgba(245,166,35,.1);padding:2px 8px;border-radius:4px">Run this if journal save fails</span>
-      </div>
-      <div class="chart-body">
-        <p style="font-size:.78rem;color:var(--text-2);margin-bottom:12px;line-height:1.7">
-          If you see errors like <strong style="color:var(--red)">"could not find the date column"</strong> or <strong style="color:var(--red)">"account_provider column not found"</strong>, your Supabase table needs to be created. Go to <strong>supabase.com → your project → SQL Editor</strong> and run:
-        </p>
-        <div style="background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:14px;font-family:var(--f-mono);font-size:.68rem;color:var(--green);line-height:2;overflow-x:auto;white-space:pre-wrap">CREATE TABLE IF NOT EXISTS journal_entries (
-  id               uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id          uuid REFERENCES auth.users(id) ON DELETE CASCADE,
-  date             date NOT NULL,
-  instrument       text,
-  result           text,
-  emotion          text,
-  reasoning        text,
-  went_well        text,
-  improve          text,
-  account_provider text,
-  created_at       timestamptz DEFAULT now()
-);
-ALTER TABLE journal_entries ENABLE ROW LEVEL SECURITY;
-CREATE POLICY IF NOT EXISTS "journal_rls" ON journal_entries FOR ALL USING (auth.uid() = user_id);
-ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS account_provider text;
-ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS date date;</div>
-        <p style="font-size:.72rem;color:var(--brand);margin-top:10px;font-family:var(--f-mono)">
-          ✅ After running → refresh this page → journal saves to Supabase<br>
-          ⚡ Until then, entries are saved locally on this device and still show in your journal.
-        </p>
       </div>
     </div>
 
