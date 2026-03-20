@@ -1053,36 +1053,44 @@ async function saveJournalEntry() {
       account_provider: firmVal
     };
 
-    console.log('Saving journal entry to Supabase:', entry);
+    // Minimal insert — only columns defined in our SQL schema
+    const payload = {
+      user_id:          currentUser.id,
+      date:             date,
+      instrument:       instrument,
+      result:           result,
+      emotion:          emotion,
+      reasoning:        reasonVal,
+      went_well:        wellVal,
+      improve:          improveVal,
+      account_provider: firmVal
+    };
 
-    const { data, error } = await sb.from('journal_entries').insert(entry).select();
+    // Use plain insert WITHOUT .select() — avoids 400 on RLS-restricted returns
+    const { error } = await sb.from('journal_entries').insert(payload);
 
     if (!error) {
       supabaseSaved++;
-      console.log('Journal saved to Supabase:', data);
     } else {
-      console.error('Supabase journal save error:', error);
+      // Log the full error for debugging
+      console.error('Journal save failed:', JSON.stringify(error), 'Code:', error.code, 'Message:', error.message, 'Details:', error.details, 'Hint:', error.hint);
       lastErr = error;
 
-      // If account_provider column missing, try without it
-      if (error.message && error.message.toLowerCase().includes('account_provider')) {
+      // If it's specifically the account_provider column missing, retry without it
+      if (error.code === '42703' || (error.message||'').includes('account_provider')) {
         const { error: e2 } = await sb.from('journal_entries').insert({
           user_id: currentUser.id, date, instrument, result, emotion,
           reasoning: reasonVal, went_well: wellVal, improve: improveVal
         });
         if (!e2) {
           supabaseSaved++;
-          // Track firm in localStorage
-          const fm = JSON.parse(localStorage.getItem('ts_jfirm') || '{}');
-          fm[date+'_'+instrument] = firmVal;
-          try { localStorage.setItem('ts_jfirm', JSON.stringify(fm)); } catch(_) {}
           lastErr = null;
         } else {
           lastErr = e2;
         }
       }
 
-      // If still failed — save to localStorage so nothing is lost
+      // If STILL failed — save locally as last resort
       if (lastErr) {
         const localJournal = JSON.parse(localStorage.getItem('ts_local_journal') || '[]');
         localJournal.unshift({
@@ -1093,10 +1101,7 @@ async function saveJournalEntry() {
           created_at: new Date().toISOString(),
           _local: true
         });
-        try {
-          localStorage.setItem('ts_local_journal', JSON.stringify(localJournal));
-          localSaved++;
-        } catch(_) {}
+        try { localStorage.setItem('ts_local_journal', JSON.stringify(localJournal)); localSaved++; } catch(_) {}
       }
     }
 
@@ -1107,7 +1112,9 @@ async function saveJournalEntry() {
 
   const total = supabaseSaved + localSaved;
   if (total === 0) {
-    showToast('Save failed: ' + (lastErr?.message || 'Unknown error. Check Supabase setup.'), 'error');
+    const errDetail = lastErr ? `${lastErr.message || ''} (code: ${lastErr.code || 'unknown'})` : 'Unknown error';
+    showToast('Save failed: ' + errDetail, 'error');
+    console.error('Final save error:', lastErr);
     return;
   }
 
@@ -1149,18 +1156,36 @@ async function saveJournalEntry() {
 async function loadJournalEntries() {
   if (!currentUser) return;
   const firmMap = JSON.parse(localStorage.getItem('ts_jfirm') || '{}');
-  // Load from Supabase
-  let remoteData = [];
-  try {
-    const { data: rd } = await sb.from('journal_entries')
-      .select('*').eq('user_id', currentUser.id)
-      .order('created_at', { ascending: false });
-    remoteData = rd || [];
-  } catch(e) { remoteData = []; }
 
-  // Merge with locally stored entries (fallback when Supabase table not configured)
+  // Load from Supabase — properly handle error (don't silently swallow it)
+  let remoteData = [];
+  const { data: rd, error: loadErr } = await sb
+    .from('journal_entries')
+    .select('*')
+    .eq('user_id', currentUser.id)
+    .order('created_at', { ascending: false });
+
+  if (loadErr) {
+    console.error('Journal load error:', loadErr);
+    // Show error in the journal container so user knows what happened
+    const container = document.getElementById('journalEntries');
+    if (container) {
+      container.innerHTML = `<div class="empty-state">
+        <div class="empty-icon">⚠️</div>
+        <div class="empty-title">Could not load journal</div>
+        <div class="empty-sub" style="color:var(--red);font-family:var(--f-mono);font-size:.7rem">
+          ${loadErr.message || 'Unknown error'} (${loadErr.code || ''})<br><br>
+          <span style="color:var(--text-3)">Make sure you ran the SQL setup in Supabase.<br>
+          Go to supabase.com → your project → SQL Editor and create the table.</span>
+        </div>
+      </div>`;
+    }
+    return;
+  }
+  remoteData = rd || [];
+
+  // Merge with locally stored entries
   const localEntries = JSON.parse(localStorage.getItem('ts_local_journal') || '[]');
-  // Combine — local entries go first (most recent)
   const data = [...localEntries, ...remoteData];
   const container = document.getElementById('journalEntries');
   if (!container) return;
