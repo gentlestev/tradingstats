@@ -547,6 +547,8 @@ function restoreJournalFormState() {
     activeJournalEmotions[activeFirm] = journalFormState.emotion;
     document.querySelectorAll('.emotion-btn').forEach(b => { if (b.textContent.trim() === journalFormState.emotion.trim()) b.classList.add('selected'); });
   }
+  // Restore firm selections
+  setTimeout(() => preSelectJFirm(activeFirm), 30);
 }
 
 function renderJournal() {
@@ -570,6 +572,25 @@ function renderJournal() {
           <div class="field-group"><label class="field-label">Date</label><input type="date" class="field-input" id="jDate"/></div>
           <div class="field-group"><label class="field-label">Instrument</label><select class="field-input" id="jInstrument" style="background:var(--bg);color:var(--text)">${instOptions}</select></div>
           <div class="field-group"><label class="field-label">Result</label><select class="field-input" id="jResult"><option value="">Select…</option><option>Win</option><option>Loss</option><option>Break Even</option></select></div>
+        </div>
+
+        <!-- Save to which firms -->
+        <div class="field-group mb-4">
+          <label class="field-label">Save to Firms</label>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px" id="jFirmChecks">
+            ${['Deriv','FTMO','The5ers','Other'].map(f => `
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 14px;border-radius:20px;border:1.5px solid var(--border);background:var(--surface2);transition:all .18s;user-select:none"
+                id="jfirm_label_${f}"
+                onclick="toggleJFirm('${f}',this)">
+                <span style="width:14px;height:14px;border-radius:3px;border:1.5px solid var(--border2);background:var(--bg);display:inline-flex;align-items:center;justify-content:center;font-size:.6rem;flex-shrink:0;transition:all .18s" id="jfirm_check_${f}"></span>
+                <span style="font-size:.75rem;font-weight:600;color:var(--text-3);transition:color .18s" id="jfirm_txt_${f}">${f}</span>
+                <input type="checkbox" id="jfirm_${f}" value="${f}" style="display:none"/>
+              </label>
+            `).join('')}
+          </div>
+          <div style="font-size:.62rem;color:var(--text-3);margin-top:6px;font-family:var(--f-mono)">
+            Select one or more firms — the entry will appear in each selected firm's journal
+          </div>
         </div>
         <div class="field-group mb-4"><label class="field-label">How were you feeling before this trade?</label>
           <div class="emotion-grid" style="margin-top:6px">
@@ -622,13 +643,79 @@ function renderJournal() {
   loadJournalEntries();
 }
 
+function toggleJFirm(firm, labelEl) {
+  const cb   = document.getElementById('jfirm_' + firm);
+  const tick = document.getElementById('jfirm_check_' + firm);
+  const txt  = document.getElementById('jfirm_txt_' + firm);
+  if (!cb) return;
+  cb.checked = !cb.checked;
+  if (cb.checked) {
+    labelEl.style.background    = 'var(--brand-bg)';
+    labelEl.style.borderColor   = 'var(--brand-br,rgba(79,142,247,.3))';
+    tick.textContent            = '✓';
+    tick.style.background       = 'var(--brand)';
+    tick.style.borderColor      = 'var(--brand)';
+    tick.style.color            = '#fff';
+    txt.style.color             = 'var(--brand)';
+  } else {
+    labelEl.style.background    = 'var(--surface2)';
+    labelEl.style.borderColor   = 'var(--border)';
+    tick.textContent            = '';
+    tick.style.background       = 'var(--bg)';
+    tick.style.borderColor      = 'var(--border2)';
+    txt.style.color             = 'var(--text-3)';
+  }
+}
+
+function getSelectedJFirms() {
+  return ['Deriv','FTMO','The5ers','Other'].filter(f => {
+    const cb = document.getElementById('jfirm_' + f);
+    return cb && cb.checked;
+  });
+}
+
+function preSelectJFirm(firm) {
+  // Auto-check the current active firm
+  const target = (firm === 'All') ? 'Other' : firm;
+  ['Deriv','FTMO','The5ers','Other'].forEach(f => {
+    const cb    = document.getElementById('jfirm_' + f);
+    const label = document.getElementById('jfirm_label_' + f);
+    if (!cb || !label) return;
+    cb.checked = (f === target);
+    toggleJFirm(f, label);
+    // toggleJFirm toggles, so call again if we need to force state
+  });
+  // Make sure selected state is correct (toggleJFirm flips, set directly)
+  ['Deriv','FTMO','The5ers','Other'].forEach(f => {
+    const cb    = document.getElementById('jfirm_' + f);
+    const label = document.getElementById('jfirm_label_' + f);
+    const tick  = document.getElementById('jfirm_check_' + f);
+    const txt   = document.getElementById('jfirm_txt_' + f);
+    if (!cb || !label) return;
+    const sel = (f === target);
+    cb.checked                = sel;
+    label.style.background    = sel ? 'var(--brand-bg)'   : 'var(--surface2)';
+    label.style.borderColor   = sel ? 'rgba(79,142,247,.3)': 'var(--border)';
+    tick.textContent          = sel ? '✓' : '';
+    tick.style.background     = sel ? 'var(--brand)' : 'var(--bg)';
+    tick.style.borderColor    = sel ? 'var(--brand)' : 'var(--border2)';
+    tick.style.color          = sel ? '#fff'         : '';
+    txt.style.color           = sel ? 'var(--brand)' : 'var(--text-3)';
+  });
+}
+
 function toggleNewEntry() {
   const f = document.getElementById('newEntryForm');
   const b = document.getElementById('newEntryBtn');
   const open = f.style.display === 'none';
   f.style.display = open ? 'block' : 'none';
   b.textContent = open ? '✕ Cancel' : '+ New Entry';
-  if (open) { f.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); document.getElementById('jDate').focus(); }
+  if (open) {
+    f.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    document.getElementById('jDate').focus();
+    // Auto-select the current active firm
+    setTimeout(() => preSelectJFirm(activeFirm), 30);
+  }
 }
 function selectEmotion(btn, em) {
   document.querySelectorAll('.emotion-btn').forEach(b => b.classList.remove('selected'));
@@ -690,72 +777,74 @@ async function saveJournalEntry() {
   const result = document.getElementById('jResult').value;
   if (!date || !instrument || !result) { showToast('Date, instrument and result required', 'error'); return; }
   const emotion = activeJournalEmotions[activeFirm] || '';
-  const firmVal = activeFirm === 'All' ? 'Other' : activeFirm;
-  const reasonVal  = document.getElementById('jReason')?.value || '';
-  const wellVal    = document.getElementById('jWell')?.value   || '';
-  const improveVal = document.getElementById('jImprove')?.value|| '';
+  const reasonVal  = document.getElementById('jReason')?.value  || '';
+  const wellVal    = document.getElementById('jWell')?.value    || '';
+  const improveVal = document.getElementById('jImprove')?.value || '';
 
-  // Try multiple column name variations until one works
-  // This handles different Supabase table schemas
-  const attempts = [
-    // Attempt 1 — full set with account_provider
-    { user_id: currentUser.id, date, instrument, result, emotion,
-      reasoning: reasonVal, went_well: wellVal, improve: improveVal,
-      account_provider: firmVal },
-    // Attempt 2 — without account_provider
-    { user_id: currentUser.id, date, instrument, result, emotion,
-      reasoning: reasonVal, went_well: wellVal, improve: improveVal },
-    // Attempt 3 — trade_date instead of date
-    { user_id: currentUser.id, trade_date: date, instrument, result, emotion,
-      reasoning: reasonVal, went_well: wellVal, improve: improveVal },
-    // Attempt 4 — entry_date
-    { user_id: currentUser.id, entry_date: date, instrument, result, emotion,
-      notes: reasonVal + (wellVal ? '\nWell: ' + wellVal : '') + (improveVal ? '\nImprove: ' + improveVal : '') },
-    // Attempt 5 — minimal: just user_id, date-ish fields and notes
-    { user_id: currentUser.id, date, notes: reasonVal, emotion },
-    // Attempt 6 — only user_id and content as one field
-    { user_id: currentUser.id, content: JSON.stringify({ date, instrument, result, emotion, reasoning: reasonVal, went_well: wellVal, improve: improveVal, firm: firmVal }) }
-  ];
+  // Get selected firms — default to activeFirm if none ticked
+  const selectedFirms = getSelectedJFirms();
+  const firmsToSave   = selectedFirms.length > 0 ? selectedFirms : [activeFirm === 'All' ? 'Other' : activeFirm];
 
-  let saved = false;
-  let lastErr = null;
+  const btn = document.querySelector('#newEntryForm .btn-sm.btn-success-sm');
+  if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
 
-  for (const payload of attempts) {
-    const { error: e } = await sb.from('journal_entries').insert(payload);
-    if (!e) {
-      saved = true;
-      break;
+  let totalSaved = 0;
+  let lastErr    = null;
+
+  // ── Save one entry per selected firm ──
+  for (const firmVal of firmsToSave) {
+    const baseEntry = {
+      user_id: currentUser.id, date, instrument, result, emotion,
+      reasoning: reasonVal, went_well: wellVal, improve: improveVal
+    };
+
+    // Try with account_provider, fallback without
+    let { error } = await sb.from('journal_entries').insert({ ...baseEntry, account_provider: firmVal });
+    if (error) {
+      const retry = await sb.from('journal_entries').insert(baseEntry);
+      error = retry.error;
+      if (!error) {
+        // Store firm locally
+        const firmMap = JSON.parse(localStorage.getItem('ts_jfirm') || '{}');
+        firmMap[date + '_' + instrument + '_' + firmVal] = firmVal;
+        firmMap[date + '_' + instrument] = firmVal;
+        try { localStorage.setItem('ts_jfirm', JSON.stringify(firmMap)); } catch(e) {}
+      }
     }
-    lastErr = e;
-    // Don't try more if it's an auth error
-    if (e.message && (e.message.includes('JWT') || e.message.includes('auth') || e.message.includes('permission'))) break;
+
+    if (!error) {
+      totalSaved++;
+    } else {
+      lastErr = error;
+      // Supabase failing entirely — save locally
+      const localJournal = JSON.parse(localStorage.getItem('ts_local_journal') || '[]');
+      localJournal.unshift({
+        id: 'local_' + Date.now() + '_' + firmVal,
+        date, instrument, result, emotion,
+        reasoning: reasonVal, went_well: wellVal, improve: improveVal,
+        account_provider: firmVal,
+        created_at: new Date().toISOString(),
+        _local: true
+      });
+      try { localStorage.setItem('ts_local_journal', JSON.stringify(localJournal)); totalSaved++; } catch(e) {}
+    }
+
+    // Small delay between inserts to avoid rate limiting
+    if (firmsToSave.length > 1) await new Promise(r => setTimeout(r, 120));
   }
 
-  // Final fallback — store everything in localStorage if Supabase keeps failing
-  if (!saved) {
-    const localJournal = JSON.parse(localStorage.getItem('ts_local_journal') || '[]');
-    localJournal.unshift({
-      id: 'local_' + Date.now(),
-      date, instrument, result, emotion,
-      reasoning: reasonVal, went_well: wellVal, improve: improveVal,
-      account_provider: firmVal,
-      created_at: new Date().toISOString(),
-      _local: true
-    });
-    try {
-      localStorage.setItem('ts_local_journal', JSON.stringify(localJournal));
-      saved = true;
-      showToast('Saved locally (Supabase table needs setup — see Help)', 'success');
-    } catch(storageErr) {
-      showToast('Could not save: ' + (lastErr?.message || 'Unknown error') + '. Please check your Supabase journal_entries table.', 'error');
-      return;
-    }
+  if (btn) { btn.textContent = 'Save Journal Entry'; btn.disabled = false; }
+
+  if (totalSaved === 0) {
+    showToast('Could not save: ' + (lastErr?.message || 'Unknown error'), 'error');
+    return;
   }
 
-  // Store firm mapping for filtering
-  const firmMap = JSON.parse(localStorage.getItem('ts_jfirm') || '{}');
-  firmMap[date + '_' + instrument] = firmVal;
-  try { localStorage.setItem('ts_jfirm', JSON.stringify(firmMap)); } catch(e) {}
+  const firmNames = firmsToSave.join(', ');
+  const msg = firmsToSave.length > 1
+    ? `✅ Saved to ${firmsToSave.length} firms: ${firmNames}`
+    : `✅ Journal entry saved to ${firmsToSave[0]}!`;
+  showToast(msg, 'success');
   showToast('Journal entry saved!', 'success');
   // Store image locally if provided
   if (journalImgData) {
@@ -767,6 +856,17 @@ async function saveJournalEntry() {
   activeJournalEmotions[activeFirm] = '';
   journalFormState = { open: false, date:'', instrument:'', result:'', emotion:'', reason:'', well:'', improve:'' };
   document.querySelectorAll('.emotion-btn').forEach(b => b.classList.remove('selected'));
+  // Reset firm checkboxes
+  ['Deriv','FTMO','The5ers','Other'].forEach(f => {
+    const cb = document.getElementById('jfirm_' + f);
+    const label = document.getElementById('jfirm_label_' + f);
+    const tick = document.getElementById('jfirm_check_' + f);
+    const txt  = document.getElementById('jfirm_txt_'   + f);
+    if (cb) cb.checked = false;
+    if (label) { label.style.background='var(--surface2)'; label.style.borderColor='var(--border)'; }
+    if (tick)  { tick.textContent=''; tick.style.background='var(--bg)'; tick.style.borderColor='var(--border2)'; }
+    if (txt)   { txt.style.color='var(--text-3)'; }
+  });
   document.getElementById('newEntryForm').style.display = 'none';
   document.getElementById('newEntryBtn').textContent = '+ New Entry';
   loadJournalEntries();
