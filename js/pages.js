@@ -2,8 +2,8 @@
 
 function renderPage(page) {
   const content = document.getElementById('pageContent');
-  const titles = { dashboard:'Dashboard', history:'Trade History', upload:'Import Trades', analysis:'Performance', journal:'Journal', calendar:'Calendar', help:'Help' };
-  const breadcrumbs = { dashboard:'Overview', history:'Trades › History', upload:'Trades › Import', analysis:'Analytics › Performance', journal:'Analytics › Journal', calendar:'Overview › Calendar', help:'Account › Help' };
+  const titles = { dashboard:'Dashboard', history:'Trade History', upload:'Import Trades', analysis:'Performance', journal:'Journal', calendar:'Calendar', objectives:'Objectives', help:'Help' };
+  const breadcrumbs = { dashboard:'Overview', history:'Trades › History', upload:'Trades › Import', analysis:'Analytics › Performance', journal:'Analytics › Journal', calendar:'Overview › Calendar', objectives:'Analytics › Objectives', help:'Account › Help' };
   document.getElementById('pageTitle').textContent = titles[page] || page;
   document.getElementById('breadcrumb').textContent = breadcrumbs[page] || '';
   document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === page));
@@ -18,6 +18,7 @@ function renderPage(page) {
     case 'analysis':   renderAnalysis(trades); break;
     case 'journal':    renderJournal(); break;
     case 'calendar':   renderCalendar(trades); break;
+    case 'objectives':  renderObjectives(trades); break;
     case 'help':       renderHelp(); break;
     default:           renderDashboard(trades);
   }
@@ -721,4 +722,347 @@ function renderHelp() {
     </div>
   </div>
   `;
+}
+
+// ══ OBJECTIVES ══
+function renderObjectives(trades) {
+  const c = document.getElementById('pageContent');
+
+  // ── Load saved settings ──
+  const firm = activeFirm === 'All' ? 'FTMO' : activeFirm;
+  const settingsKey = 'ts_obj_' + firm;
+  const saved = JSON.parse(localStorage.getItem(settingsKey) || 'null');
+
+  // Default limits per firm
+  const DEFAULTS = {
+    FTMO:    { balance: 100000, dailyLoss: 5,  maxLoss: 10, profitTarget: 10, minDays: 4 },
+    Deriv:   { balance: 10000,  dailyLoss: 5,  maxLoss: 10, profitTarget: 10, minDays: 2 },
+    The5ers: { balance: 80000,  dailyLoss: 4,  maxLoss: 8,  profitTarget: 8,  minDays: 3 },
+    Other:   { balance: 10000,  dailyLoss: 5,  maxLoss: 10, profitTarget: 10, minDays: 2 }
+  };
+  const cfg = saved || DEFAULTS[firm] || DEFAULTS.FTMO;
+
+  // ── Compute stats from trades ──
+  const startBal  = parseFloat(localStorage.getItem('ts_startbal_' + activeFirm) || cfg.balance) || cfg.balance;
+  const netPnl    = trades.reduce((s, t) => s + parseFloat(t.profit_loss || 0), 0);
+  const equity    = startBal + netPnl;
+  const balance   = equity;
+
+  // Daily P&L map
+  const dayMap = {};
+  trades.forEach(t => {
+    if (!t.date) return;
+    const d = t.date.slice(0, 10);
+    if (!dayMap[d]) dayMap[d] = { pnl: 0, trades: 0, lots: 0 };
+    dayMap[d].pnl    += parseFloat(t.profit_loss || 0);
+    dayMap[d].trades += 1;
+    dayMap[d].lots   += parseFloat(t.lots || t.volume || 0);
+  });
+
+  const tradingDays  = Object.keys(dayMap).length;
+  const todayStr     = new Date().toISOString().split('T')[0];
+  const todayPnl     = dayMap[todayStr]?.pnl || 0;
+  const worstDay     = Math.min(0, ...Object.values(dayMap).map(d => d.pnl));
+  const totalLoss    = Math.min(0, netPnl);
+
+  // Limits in dollars
+  const dailyLossLimit  = -(startBal * cfg.dailyLoss  / 100);
+  const maxLossLimit    = -(startBal * cfg.maxLoss    / 100);
+  const profitTargetAmt =   startBal * cfg.profitTarget / 100;
+
+  // Pass/fail checks
+  const passDays        = tradingDays >= cfg.minDays;
+  const passDailyLoss   = worstDay   >= dailyLossLimit;
+  const passMaxLoss     = totalLoss  >= maxLossLimit;
+  const passProfit      = netPnl     >= profitTargetAmt;
+
+  // Discipline score (0–100) — how well rules are followed
+  let score = 0;
+  if (passDays)      score += 20;
+  if (passDailyLoss) score += 30;
+  if (passMaxLoss)   score += 30;
+  if (passProfit)    score += 20;
+  // Penalise if close to breach
+  const dailyPct  = worstDay < 0   ? Math.min(100, Math.abs(worstDay   / dailyLossLimit)  * 100) : 0;
+  const maxPct    = totalLoss < 0  ? Math.min(100, Math.abs(totalLoss  / maxLossLimit)    * 100) : 0;
+  if (dailyPct > 70) score -= 10;
+  if (maxPct   > 70) score -= 10;
+  score = Math.max(0, Math.min(100, score));
+
+  const scoreLabel = score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Average' : 'Needs Work';
+  const scoreColor = score >= 80 ? '#22d07a'  : score >= 60 ? '#f5a623' : '#f54b5e';
+
+  // Daily summary rows (last 7 trading days)
+  const sortedDays = Object.keys(dayMap).sort().reverse().slice(0, 7);
+
+  // ── Render ──
+  c.innerHTML = `
+  <!-- Settings row -->
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:18px;flex-wrap:wrap">
+    <span style="font-size:.72rem;font-weight:600;color:var(--text-3)">Configure limits for</span>
+    <strong style="color:var(--brand)">${firm}</strong>
+    <button class="btn-sm btn-outline-sm" onclick="toggleObjSettings()" id="objSettingsBtn">⚙ Edit Limits</button>
+  </div>
+
+  <!-- Settings Panel (hidden by default) -->
+  <div id="objSettingsPanel" style="display:none;margin-bottom:18px">
+    <div class="chart-card">
+      <div class="chart-card-header"><div class="chart-card-title">⚙ Account Limits — ${firm}</div><button onclick="toggleObjSettings()" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:18px">✕</button></div>
+      <div class="chart-body">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:14px">
+          <div class="field-group"><label class="field-label">Account Balance ($)</label><input type="number" class="field-input" id="cfg_balance" value="${cfg.balance}" placeholder="e.g. 100000"/></div>
+          <div class="field-group"><label class="field-label">Daily Loss Limit (%)</label><input type="number" class="field-input" id="cfg_daily" value="${cfg.dailyLoss}" placeholder="e.g. 5" step="0.1"/></div>
+          <div class="field-group"><label class="field-label">Max Loss Limit (%)</label><input type="number" class="field-input" id="cfg_max" value="${cfg.maxLoss}" placeholder="e.g. 10" step="0.1"/></div>
+          <div class="field-group"><label class="field-label">Profit Target (%)</label><input type="number" class="field-input" id="cfg_profit" value="${cfg.profitTarget}" placeholder="e.g. 10" step="0.1"/></div>
+          <div class="field-group"><label class="field-label">Min Trading Days</label><input type="number" class="field-input" id="cfg_days" value="${cfg.minDays}" placeholder="e.g. 4"/></div>
+        </div>
+        <button class="btn-sm btn-success-sm" onclick="saveObjSettings('${firm}')" style="padding:9px 20px">Save Limits</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top row: Discipline Score + Objectives -->
+  <div style="display:grid;grid-template-columns:340px 1fr;gap:16px;margin-bottom:16px;align-items:start">
+
+    <!-- Discipline Score -->
+    <div class="chart-card">
+      <div class="chart-card-header">
+        <div><div class="chart-card-title">Discipline Score</div></div>
+        <div style="display:flex;gap:8px;align-items:center;font-family:var(--f-mono);font-size:.58rem;flex-wrap:wrap">
+          <span style="color:var(--red)">● 0–30%</span>
+          <span style="color:var(--amber)">● 30–80%</span>
+          <span style="color:var(--green)">● 80–100%</span>
+        </div>
+      </div>
+      <div class="chart-body" style="display:flex;flex-direction:column;align-items:center;padding:20px">
+        <div style="position:relative;width:200px;height:110px;margin-bottom:10px">
+          <canvas id="gaugeCanvas" width="200" height="110"></canvas>
+          <div style="position:absolute;bottom:10px;left:0;right:0;text-align:center">
+            <div style="font-family:var(--f-disp);font-size:2rem;font-weight:800;color:${scoreColor};line-height:1">${score}%</div>
+            <div style="font-family:var(--f-mono);font-size:.68rem;color:${scoreColor}">${scoreLabel}</div>
+          </div>
+        </div>
+        <div style="width:100%;display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center">
+            <div style="font-family:var(--f-mono);font-size:.55rem;color:var(--text-3);margin-bottom:4px">EQUITY</div>
+            <div style="font-family:var(--f-disp);font-size:.95rem;font-weight:800;color:var(--text)">$${equity.toLocaleString('en-US',{minimumFractionDigits:2})}</div>
+          </div>
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center">
+            <div style="font-family:var(--f-mono);font-size:.55rem;color:var(--text-3);margin-bottom:4px">BALANCE</div>
+            <div style="font-family:var(--f-disp);font-size:.95rem;font-weight:800;color:var(--text)">$${balance.toLocaleString('en-US',{minimumFractionDigits:2})}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Objectives Table -->
+    <div class="chart-card">
+      <div class="chart-card-header"><div class="chart-card-title">Objectives</div></div>
+      <div style="overflow-x:auto">
+        <table class="data-table">
+          <thead><tr><th>Trading Objective</th><th>Limit</th><th>Your Result</th><th style="text-align:center">Status</th></tr></thead>
+          <tbody>
+            ${objRow('Minimum Trading Days',      cfg.minDays + ' days',          tradingDays + ' days',           passDays)}
+            ${objRow('Max Daily Loss',            '-$'+Math.abs(dailyLossLimit).toLocaleString('en-US',{minimumFractionDigits:2})+' (-'+cfg.dailyLoss+'%)', '$'+worstDay.toFixed(2)+' ('+((worstDay/startBal)*100).toFixed(1)+'%)', passDailyLoss)}
+            ${objRow('Max Overall Loss',          '-$'+Math.abs(maxLossLimit).toLocaleString('en-US',{minimumFractionDigits:2})+' (-'+cfg.maxLoss+'%)',    '$'+totalLoss.toFixed(2)+' ('+(( totalLoss/startBal)*100).toFixed(1)+'%)',  passMaxLoss)}
+            ${objRow('Profit Target',             '+$'+profitTargetAmt.toLocaleString('en-US',{minimumFractionDigits:2})+' (+'+cfg.profitTarget+'%)',      (netPnl>=0?'+$':'-$')+Math.abs(netPnl).toFixed(2)+' ('+((netPnl/startBal)*100).toFixed(1)+'%)', passProfit)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick stats bar (like FTMO's 3-box row) -->
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+    ${quickStatBox("Today's Permitted Loss", '$'+Math.abs(dailyLossLimit).toFixed(2), todayPnl < 0 ? 'var(--red)' : 'var(--green)')}
+    ${quickStatBox("Max Permitted Loss",     '$'+(startBal + maxLossLimit).toFixed(2), 'var(--text)')}
+    ${quickStatBox("Today's Profit/Loss",    (todayPnl>=0?'+$':'-$')+Math.abs(todayPnl).toFixed(2), todayPnl >= 0 ? 'var(--green)' : 'var(--red)')}
+  </div>
+
+  <!-- Bottom row: Statistics + Daily Summary -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+
+    <!-- Statistics -->
+    <div class="chart-card">
+      <div class="chart-card-header"><div class="chart-card-title">Statistics</div></div>
+      <div class="chart-body">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border)">
+          ${statCell('Win Rate',       calcStats(trades).wr.toFixed(2)+'%',  calcStats(trades).wr >= 50 ? 'var(--green)' : 'var(--red)')}
+          ${statCell('Average Profit', '$'+calcStats(trades).aw.toFixed(2),  'var(--green)')}
+          ${statCell('Average Loss',   '-$'+calcStats(trades).al.toFixed(2), 'var(--red)')}
+          ${statCell('No. of Trades',  calcStats(trades).total, 'var(--text)')}
+          ${statCell('Profit Factor',  calcStats(trades).pf >= 99 ? '∞' : calcStats(trades).pf.toFixed(2), calcStats(trades).pf >= 1.5 ? 'var(--green)' : 'var(--red)')}
+          ${statCell('Expectancy',     '$'+calcStats(trades).exp.toFixed(2), calcStats(trades).exp >= 0 ? 'var(--green)' : 'var(--red)')}
+          ${statCell('Avg RRR',        calcStats(trades).rrr.toFixed(2), 'var(--amber)')}
+          ${statCell('Net P&L',        (netPnl>=0?'+$':'-$')+Math.abs(netPnl).toFixed(2), netPnl >= 0 ? 'var(--green)' : 'var(--red)')}
+        </div>
+      </div>
+    </div>
+
+    <!-- Daily Summary -->
+    <div class="chart-card">
+      <div class="chart-card-header"><div class="chart-card-title">Daily Summary</div><span style="font-size:.65rem;color:var(--text-3);font-family:var(--f-mono)">Last ${sortedDays.length} days</span></div>
+      <div style="overflow-x:auto">
+        <table class="data-table">
+          <thead><tr><th>Date</th><th>Trades</th><th>Result</th><th>Status</th></tr></thead>
+          <tbody>
+            ${sortedDays.length ? sortedDays.map(d => {
+              const day = dayMap[d];
+              const pass = day.pnl >= dailyLossLimit;
+              return `<tr>
+                <td style="color:var(--brand);font-family:var(--f-mono);font-weight:600">${d.slice(5)}</td>
+                <td>${day.trades}</td>
+                <td style="color:${day.pnl>=0?'var(--green)':'var(--red)'};font-weight:700;font-family:var(--f-mono)">${day.pnl>=0?'+$':'-$'}${Math.abs(day.pnl).toFixed(2)}</td>
+                <td>${pass
+                  ? '<span style="background:rgba(34,208,122,.15);color:var(--green);border:1px solid rgba(34,208,122,.3);border-radius:4px;padding:2px 8px;font-size:.65rem;font-weight:700">✓ OK</span>'
+                  : '<span style="background:rgba(245,75,94,.15);color:var(--red);border:1px solid rgba(245,75,94,.3);border-radius:4px;padding:2px 8px;font-size:.65rem;font-weight:700">✗ BREACH</span>'
+                }</td>
+              </tr>`;
+            }).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:20px">No trades yet</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Progress to profit target -->
+  <div class="chart-card" style="margin-top:16px">
+    <div class="chart-card-header">
+      <div><div class="chart-card-title">Progress to Profit Target</div><div class="chart-card-sub">$${netPnl.toFixed(2)} of $${profitTargetAmt.toFixed(2)} target</div></div>
+      <span class="chart-badge ${passProfit ? 'cb-green' : 'cb-red'}">${passProfit ? '✓ PASSED' : Math.round(netPnl / profitTargetAmt * 100) + '%'}</span>
+    </div>
+    <div class="chart-body">
+      <div style="height:12px;background:var(--border2);border-radius:8px;overflow:hidden;margin-bottom:8px">
+        <div style="height:100%;width:${Math.min(100,Math.max(0,netPnl/profitTargetAmt*100)).toFixed(1)}%;background:${passProfit?'var(--green)':'var(--brand)'};border-radius:8px;transition:width 1.4s cubic-bezier(.4,0,.2,1)"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-family:var(--f-mono);font-size:.65rem;color:var(--text-3)">
+        <span>$0</span>
+        <span style="color:${netPnl>=0?'var(--green)':'var(--red)'}">Current: ${netPnl>=0?'+$':'-$'}${Math.abs(netPnl).toFixed(2)}</span>
+        <span>Target: $${profitTargetAmt.toFixed(2)}</span>
+      </div>
+    </div>
+  </div>
+  `;
+
+  // Draw gauge
+  setTimeout(() => drawDisciplineGauge('gaugeCanvas', score), 60);
+}
+
+// ── Gauge (semicircle) ──
+function drawDisciplineGauge(id, score) {
+  const canvas = document.getElementById(id);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const cx = W / 2, cy = H - 10;
+  const r = Math.min(W, H * 2) / 2 - 12;
+  ctx.clearRect(0, 0, W, H);
+
+  // Draw arc segments (red → amber → green)
+  const segments = [
+    { from: 0,   to: 30,  color: '#f54b5e' },
+    { from: 30,  to: 80,  color: '#f5a623' },
+    { from: 80,  to: 100, color: '#22d07a' }
+  ];
+  segments.forEach(seg => {
+    const startA = Math.PI + (seg.from / 100) * Math.PI;
+    const endA   = Math.PI + (seg.to   / 100) * Math.PI;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, startA, endA);
+    ctx.strokeStyle = seg.color;
+    ctx.lineWidth = 14;
+    ctx.lineCap = 'butt';
+    ctx.stroke();
+  });
+
+  // Track background (grey)
+  ctx.beginPath();
+  ctx.arc(cx, cy, r - 18, Math.PI, 2 * Math.PI);
+  ctx.strokeStyle = 'rgba(30,42,60,.9)';
+  ctx.lineWidth = 10;
+  ctx.stroke();
+
+  // Score fill on inner track
+  const fillEnd = Math.PI + (score / 100) * Math.PI;
+  const fillColor = score >= 80 ? '#22d07a' : score >= 60 ? '#f5a623' : '#f54b5e';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r - 18, Math.PI, fillEnd);
+  ctx.strokeStyle = fillColor;
+  ctx.lineWidth = 10;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // Needle
+  const needleAngle = Math.PI + (score / 100) * Math.PI;
+  const nx = cx + (r - 8) * Math.cos(needleAngle);
+  const ny = cy + (r - 8) * Math.sin(needleAngle);
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(nx, ny);
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // Centre dot
+  ctx.beginPath();
+  ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+  ctx.fillStyle = '#fff';
+  ctx.fill();
+
+  // Labels
+  ctx.font = "9px 'Space Mono',monospace";
+  ctx.fillStyle = 'rgba(156,174,200,.6)';
+  ctx.textAlign = 'center';
+  ctx.fillText('0%',   cx - r + 4, cy + 14);
+  ctx.fillText('50%',  cx,         cy - r - 4);
+  ctx.fillText('100%', cx + r - 4, cy + 14);
+}
+
+// ── Objective row helper ──
+function objRow(label, limit, result, pass) {
+  const icon = pass
+    ? '<div style="width:22px;height:22px;background:rgba(34,208,122,.2);border:1px solid rgba(34,208,122,.4);border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--green);font-size:.75rem;font-weight:700;margin:0 auto">✓</div>'
+    : '<div style="width:22px;height:22px;background:rgba(245,75,94,.2);border:1px solid rgba(245,75,94,.4);border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--red);font-size:.75rem;font-weight:700;margin:0 auto">✗</div>';
+  return `<tr>
+    <td style="color:var(--brand);font-weight:600">${label}</td>
+    <td style="font-family:var(--f-mono);font-size:.72rem;color:var(--text-2)">${limit}</td>
+    <td style="font-family:var(--f-mono);font-size:.72rem;color:var(--text)">${result}</td>
+    <td style="text-align:center">${icon}</td>
+  </tr>`;
+}
+
+// ── Quick stat box helper ──
+function quickStatBox(label, value, valueColor) {
+  return `<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r);padding:16px 18px;text-align:center">
+    <div style="font-size:.7rem;color:var(--text-3);margin-bottom:6px;font-family:var(--f-mono)">${label}</div>
+    <div style="font-family:var(--f-disp);font-size:1.3rem;font-weight:800;color:${valueColor}">${value}</div>
+  </div>`;
+}
+
+// ── Stat cell helper ──
+function statCell(label, value, valueColor) {
+  return `<div style="background:var(--surface);padding:14px;text-align:center">
+    <div style="font-size:.62rem;color:var(--text-3);margin-bottom:5px;font-family:var(--f-mono)">${label}</div>
+    <div style="font-family:var(--f-disp);font-size:1rem;font-weight:800;color:${valueColor}">${value}</div>
+  </div>`;
+}
+
+// ── Settings toggle & save ──
+function toggleObjSettings() {
+  const panel = document.getElementById('objSettingsPanel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+function saveObjSettings(firm) {
+  const cfg = {
+    balance:       parseFloat(document.getElementById('cfg_balance').value) || 100000,
+    dailyLoss:     parseFloat(document.getElementById('cfg_daily').value)   || 5,
+    maxLoss:       parseFloat(document.getElementById('cfg_max').value)     || 10,
+    profitTarget:  parseFloat(document.getElementById('cfg_profit').value)  || 10,
+    minDays:       parseInt(document.getElementById('cfg_days').value)      || 4
+  };
+  localStorage.setItem('ts_obj_' + firm, JSON.stringify(cfg));
+  showToast('Limits saved for ' + firm + '!', 'success');
+  toggleObjSettings();
+  renderPage('objectives');
 }
