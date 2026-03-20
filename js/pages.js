@@ -691,35 +691,71 @@ async function saveJournalEntry() {
   if (!date || !instrument || !result) { showToast('Date, instrument and result required', 'error'); return; }
   const emotion = activeJournalEmotions[activeFirm] || '';
   const firmVal = activeFirm === 'All' ? 'Other' : activeFirm;
-  // Build insert — only include columns that exist in standard Supabase journal_entries table
-  // account_provider is optional — we try with it first, fallback without if column missing
-  const baseEntry = {
-    user_id:   currentUser.id,
-    date,
-    instrument,
-    result,
-    emotion,
-    reasoning: document.getElementById('jReason').value,
-    went_well: document.getElementById('jWell').value,
-    improve:   document.getElementById('jImprove').value
-  };
+  const reasonVal  = document.getElementById('jReason')?.value || '';
+  const wellVal    = document.getElementById('jWell')?.value   || '';
+  const improveVal = document.getElementById('jImprove')?.value|| '';
 
-  // Try with account_provider first
-  let { error } = await sb.from('journal_entries').insert({ ...baseEntry, account_provider: firmVal });
+  // Try multiple column name variations until one works
+  // This handles different Supabase table schemas
+  const attempts = [
+    // Attempt 1 — full set with account_provider
+    { user_id: currentUser.id, date, instrument, result, emotion,
+      reasoning: reasonVal, went_well: wellVal, improve: improveVal,
+      account_provider: firmVal },
+    // Attempt 2 — without account_provider
+    { user_id: currentUser.id, date, instrument, result, emotion,
+      reasoning: reasonVal, went_well: wellVal, improve: improveVal },
+    // Attempt 3 — trade_date instead of date
+    { user_id: currentUser.id, trade_date: date, instrument, result, emotion,
+      reasoning: reasonVal, went_well: wellVal, improve: improveVal },
+    // Attempt 4 — entry_date
+    { user_id: currentUser.id, entry_date: date, instrument, result, emotion,
+      notes: reasonVal + (wellVal ? '\nWell: ' + wellVal : '') + (improveVal ? '\nImprove: ' + improveVal : '') },
+    // Attempt 5 — minimal: just user_id, date-ish fields and notes
+    { user_id: currentUser.id, date, notes: reasonVal, emotion },
+    // Attempt 6 — only user_id and content as one field
+    { user_id: currentUser.id, content: JSON.stringify({ date, instrument, result, emotion, reasoning: reasonVal, went_well: wellVal, improve: improveVal, firm: firmVal }) }
+  ];
 
-  // Column doesn't exist in this table → save without it, store firm in localStorage
-  if (error) {
-    const fallback = await sb.from('journal_entries').insert(baseEntry);
-    error = fallback.error;
-    // Store the firm mapping locally so we can filter journal by firm
-    if (!error) {
-      const firmMap = JSON.parse(localStorage.getItem('ts_jfirm') || '{}');
-      // We'll store by date+instrument as key
-      firmMap[date + '_' + instrument] = firmVal;
-      try { localStorage.setItem('ts_jfirm', JSON.stringify(firmMap)); } catch(e) {}
+  let saved = false;
+  let lastErr = null;
+
+  for (const payload of attempts) {
+    const { error: e } = await sb.from('journal_entries').insert(payload);
+    if (!e) {
+      saved = true;
+      break;
+    }
+    lastErr = e;
+    // Don't try more if it's an auth error
+    if (e.message && (e.message.includes('JWT') || e.message.includes('auth') || e.message.includes('permission'))) break;
+  }
+
+  // Final fallback — store everything in localStorage if Supabase keeps failing
+  if (!saved) {
+    const localJournal = JSON.parse(localStorage.getItem('ts_local_journal') || '[]');
+    localJournal.unshift({
+      id: 'local_' + Date.now(),
+      date, instrument, result, emotion,
+      reasoning: reasonVal, went_well: wellVal, improve: improveVal,
+      account_provider: firmVal,
+      created_at: new Date().toISOString(),
+      _local: true
+    });
+    try {
+      localStorage.setItem('ts_local_journal', JSON.stringify(localJournal));
+      saved = true;
+      showToast('Saved locally (Supabase table needs setup — see Help)', 'success');
+    } catch(storageErr) {
+      showToast('Could not save: ' + (lastErr?.message || 'Unknown error') + '. Please check your Supabase journal_entries table.', 'error');
+      return;
     }
   }
-  if (error) { showToast('Save failed: ' + error.message, 'error'); return; }
+
+  // Store firm mapping for filtering
+  const firmMap = JSON.parse(localStorage.getItem('ts_jfirm') || '{}');
+  firmMap[date + '_' + instrument] = firmVal;
+  try { localStorage.setItem('ts_jfirm', JSON.stringify(firmMap)); } catch(e) {}
   showToast('Journal entry saved!', 'success');
   // Store image locally if provided
   if (journalImgData) {
@@ -737,10 +773,20 @@ async function saveJournalEntry() {
 }
 async function loadJournalEntries() {
   if (!currentUser) return;
-  let q = sb.from('journal_entries').select('*').eq('user_id', currentUser.id).order('date', { ascending: false });
-  const { data } = await q;
-  // Filter by firm client-side (handles both cases: column exists or not)
   const firmMap = JSON.parse(localStorage.getItem('ts_jfirm') || '{}');
+  // Load from Supabase
+  let remoteData = [];
+  try {
+    const { data: rd } = await sb.from('journal_entries')
+      .select('*').eq('user_id', currentUser.id)
+      .order('date', { ascending: false });
+    remoteData = rd || [];
+  } catch(e) { remoteData = []; }
+
+  // Merge with locally stored entries (fallback when Supabase table not configured)
+  const localEntries = JSON.parse(localStorage.getItem('ts_local_journal') || '[]');
+  // Combine — local entries go first (most recent)
+  const data = [...localEntries, ...remoteData];
   const container = document.getElementById('journalEntries');
   if (!container) return;
   if (!data?.length) { container.innerHTML = `<div class="empty-state"><div class="empty-icon">📝</div><div class="empty-title">No journal entries yet</div><div class="empty-sub">Start journaling to build your trading psychology insights.</div></div>`; return; }
@@ -849,11 +895,84 @@ function renderHelp() {
         <strong style="color:var(--green)">80–100: Elite</strong> · <strong style="color:var(--brand-l)">65–79: Strong</strong> · <strong style="color:var(--amber)">50–64: Developing</strong> · <strong style="color:var(--red)">0–49: Needs work</strong>
       </div>
     </div>
+    <div class="chart-card mb-4">
+      <div class="chart-card-header"><div class="chart-card-title">🗄️ Fix Journal — Supabase Table Setup</div><span style="font-size:.65rem;color:var(--amber);font-family:var(--f-mono);background:rgba(245,166,35,.1);padding:2px 8px;border-radius:4px">Run this if journal save fails</span></div>
+      <div class="chart-body">
+        <p style="font-size:.78rem;color:var(--text-2);margin-bottom:12px;line-height:1.7">If you get errors like <strong style="color:var(--red)">"could not find the date column"</strong> or <strong style="color:var(--red)">"account_provider column"</strong>, your Supabase <code style="background:var(--bg);padding:2px 6px;border-radius:4px;font-family:var(--f-mono);font-size:.75rem">journal_entries</code> table needs to be created or updated. Go to your Supabase project → SQL Editor → paste and run this:</p>
+        <div style="background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:16px;font-family:var(--f-mono);font-size:.7rem;color:var(--green);line-height:1.9;overflow-x:auto;white-space:pre">-- Run this in Supabase SQL Editor
+-- Go to: supabase.com → your project → SQL Editor
+
+CREATE TABLE IF NOT EXISTS journal_entries (
+  id               uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id          uuid REFERENCES auth.users(id) ON DELETE CASCADE,
+  date             date NOT NULL,
+  instrument       text,
+  result           text,
+  emotion          text,
+  reasoning        text,
+  went_well        text,
+  improve          text,
+  account_provider text,
+  created_at       timestamptz DEFAULT now()
+);
+
+-- Enable Row Level Security
+ALTER TABLE journal_entries ENABLE ROW LEVEL SECURITY;
+
+-- Allow users to only see their own entries
+CREATE POLICY IF NOT EXISTS "Users see own journal entries"
+  ON journal_entries FOR ALL
+  USING (auth.uid() = user_id);
+
+-- Add account_provider if table already exists but column is missing
+ALTER TABLE journal_entries
+  ADD COLUMN IF NOT EXISTS account_provider text;
+
+-- Add date column if missing (in case table was created differently)  
+ALTER TABLE journal_entries
+  ADD COLUMN IF NOT EXISTS date date;</div>
+        <p style="font-size:.72rem;color:var(--text-3);margin-top:10px;font-family:var(--f-mono)">After running → refresh this page → journal saving will work ✅</p>
+        <p style="font-size:.72rem;color:var(--brand);margin-top:6px;font-family:var(--f-mono)">⚡ Until you run the SQL, entries are saved locally on this device and still appear in your journal.</p>
+      </div>
+    </div>
+
     <div style="text-align:center;margin-top:28px;padding:20px;background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r)">
       <div style="font-family:var(--f-disp);font-size:1.1rem;font-weight:800;margin-bottom:4px;background:linear-gradient(135deg,var(--brand-l),var(--green));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">TradingStats</div>
       <div style="font-size:.7rem;color:var(--text-3)">Built by <strong style="color:var(--green)">Osita Onyeje</strong> · <a href="mailto:nwaogalanyapaulinus@gmail.com" style="color:var(--text-3)">nwaogalanyapaulinus@gmail.com</a> · © 2026</div>
+    <div class="chart-card mb-4">
+      <div class="chart-card-header">
+        <div class="chart-card-title">🗄️ Fix Journal — Supabase Table Setup</div>
+        <span style="font-size:.65rem;color:var(--amber);font-family:var(--f-mono);background:rgba(245,166,35,.1);padding:2px 8px;border-radius:4px">Run this if journal save fails</span>
+      </div>
+      <div class="chart-body">
+        <p style="font-size:.78rem;color:var(--text-2);margin-bottom:12px;line-height:1.7">
+          If you see errors like <strong style="color:var(--red)">"could not find the date column"</strong> or <strong style="color:var(--red)">"account_provider column not found"</strong>, your Supabase table needs to be created. Go to <strong>supabase.com → your project → SQL Editor</strong> and run:
+        </p>
+        <div style="background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:14px;font-family:var(--f-mono);font-size:.68rem;color:var(--green);line-height:2;overflow-x:auto;white-space:pre-wrap">CREATE TABLE IF NOT EXISTS journal_entries (
+  id               uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id          uuid REFERENCES auth.users(id) ON DELETE CASCADE,
+  date             date NOT NULL,
+  instrument       text,
+  result           text,
+  emotion          text,
+  reasoning        text,
+  went_well        text,
+  improve          text,
+  account_provider text,
+  created_at       timestamptz DEFAULT now()
+);
+ALTER TABLE journal_entries ENABLE ROW LEVEL SECURITY;
+CREATE POLICY IF NOT EXISTS "journal_rls" ON journal_entries FOR ALL USING (auth.uid() = user_id);
+ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS account_provider text;
+ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS date date;</div>
+        <p style="font-size:.72rem;color:var(--brand);margin-top:10px;font-family:var(--f-mono)">
+          ✅ After running → refresh this page → journal saves to Supabase<br>
+          ⚡ Until then, entries are saved locally on this device and still show in your journal.
+        </p>
+      </div>
     </div>
-  </div>
+
+    </div>
   `;
 }
 
