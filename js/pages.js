@@ -599,22 +599,6 @@ function renderJournal() {
           <input type="file" id="jImgInput" accept="image/*" style="display:none" onchange="handleJournalImgSelect(this.files)"/>
           <button id="jImgClear" style="display:none;margin-top:6px;background:none;border:none;color:var(--red);font-size:.7rem;cursor:pointer" onclick="clearJournalImg()">✕ Remove image</button>
         </div>
-        <!-- Screenshot upload -->
-        <div class="field-group" style="margin-bottom:14px">
-          <label class="field-label">Trade Screenshot (optional)</label>
-          <div id="jImgDrop" style="border:2px dashed var(--border2);border-radius:8px;padding:18px;text-align:center;cursor:pointer;transition:all .2s"
-            onclick="document.getElementById('jImgInput').click()"
-            ondragover="event.preventDefault();this.style.borderColor='var(--brand)'"
-            ondragleave="this.style.borderColor='var(--border2)'"
-            ondrop="handleJournalImgDrop(event)">
-            <div id="jImgPreview" style="display:none;margin-bottom:8px">
-              <img id="jImgThumb" style="max-height:120px;border-radius:6px;max-width:100%" alt="preview"/>
-            </div>
-            <div id="jImgLabel" style="font-size:.75rem;color:var(--text-3)">📷 Drop screenshot or tap to upload</div>
-          </div>
-          <input type="file" id="jImgInput" accept="image/*" style="display:none" onchange="handleJournalImgSelect(this.files)"/>
-          <button id="jImgClear" style="display:none;margin-top:6px;background:none;border:none;color:var(--red);font-size:.7rem;cursor:pointer" onclick="clearJournalImg()">✕ Remove image</button>
-        </div>
         <button class="btn-sm btn-success-sm" onclick="saveJournalEntry()" style="width:100%;padding:10px">Save Journal Entry</button>
       </div>
     </div>
@@ -707,22 +691,35 @@ async function saveJournalEntry() {
   if (!date || !instrument || !result) { showToast('Date, instrument and result required', 'error'); return; }
   const emotion = activeJournalEmotions[activeFirm] || '';
   const firmVal = activeFirm === 'All' ? 'Other' : activeFirm;
-  const entryData = {
-    user_id: currentUser.id,
-    date, instrument, result, emotion,
+  // Build insert — only include columns that exist in standard Supabase journal_entries table
+  // account_provider is optional — we try with it first, fallback without if column missing
+  const baseEntry = {
+    user_id:   currentUser.id,
+    date,
+    instrument,
+    result,
+    emotion,
     reasoning: document.getElementById('jReason').value,
     went_well: document.getElementById('jWell').value,
-    improve:   document.getElementById('jImprove').value,
-    account_provider: firmVal
+    improve:   document.getElementById('jImprove').value
   };
-  let { error } = await sb.from('journal_entries').insert(entryData);
-  // If account_provider column doesn't exist yet, retry without it
-  if (error && error.message && error.message.includes('account_provider')) {
-    const { account_provider, ...dataWithout } = entryData;
-    const retry = await sb.from('journal_entries').insert(dataWithout);
-    error = retry.error;
+
+  // Try with account_provider first
+  let { error } = await sb.from('journal_entries').insert({ ...baseEntry, account_provider: firmVal });
+
+  // Column doesn't exist in this table → save without it, store firm in localStorage
+  if (error) {
+    const fallback = await sb.from('journal_entries').insert(baseEntry);
+    error = fallback.error;
+    // Store the firm mapping locally so we can filter journal by firm
+    if (!error) {
+      const firmMap = JSON.parse(localStorage.getItem('ts_jfirm') || '{}');
+      // We'll store by date+instrument as key
+      firmMap[date + '_' + instrument] = firmVal;
+      try { localStorage.setItem('ts_jfirm', JSON.stringify(firmMap)); } catch(e) {}
+    }
   }
-  if (error) { showToast('Error: '+error.message, 'error'); return; }
+  if (error) { showToast('Save failed: ' + error.message, 'error'); return; }
   showToast('Journal entry saved!', 'success');
   // Store image locally if provided
   if (journalImgData) {
@@ -741,17 +738,23 @@ async function saveJournalEntry() {
 async function loadJournalEntries() {
   if (!currentUser) return;
   let q = sb.from('journal_entries').select('*').eq('user_id', currentUser.id).order('date', { ascending: false });
-  if (activeFirm !== 'All') q = q.eq('account_provider', activeFirm);
   const { data } = await q;
+  // Filter by firm client-side (handles both cases: column exists or not)
+  const firmMap = JSON.parse(localStorage.getItem('ts_jfirm') || '{}');
   const container = document.getElementById('journalEntries');
   if (!container) return;
   if (!data?.length) { container.innerHTML = `<div class="empty-state"><div class="empty-icon">📝</div><div class="empty-title">No journal entries yet</div><div class="empty-sub">Start journaling to build your trading psychology insights.</div></div>`; return; }
-  const filtered = data.filter(e => { if(activeJournalFilter==='all')return true; if(activeJournalFilter==='win')return e.result==='Win'; if(activeJournalFilter==='loss')return e.result==='Loss'; if(activeJournalFilter==='be')return e.result==='Break Even'; return true; });
+  // Filter by firm (use account_provider column if available, else firmMap from localStorage)
+  const firmFiltered = (activeFirm === 'All') ? data : data.filter(e => {
+    const eFirm = e.account_provider || firmMap[e.date + '_' + e.instrument] || 'Other';
+    return eFirm === activeFirm;
+  });
+  const filtered = firmFiltered.filter(e => { if(activeJournalFilter==='all')return true; if(activeJournalFilter==='win')return e.result==='Win'; if(activeJournalFilter==='loss')return e.result==='Loss'; if(activeJournalFilter==='be')return e.result==='Break Even'; return true; });
   container.innerHTML = filtered.map(e => {
     const badge = e.result==='Win'?'badge-win':e.result==='Loss'?'badge-loss':'badge-be';
     return `<div class="jentry">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;flex-wrap:wrap;gap:6px">
-        <div><div class="jentry-date">${e.date} · <span style="color:var(--text-3)">${e.account_provider||''}</span></div><div class="jentry-instr">${e.instrument||'—'}</div></div>
+        <div><div class="jentry-date">${e.date} · <span style="color:var(--text-3)">${e.account_provider || firmMap[e.date + '_' + e.instrument] || ''}</span></div><div class="jentry-instr">${e.instrument||'—'}</div></div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
           <span class="badge ${badge}">${e.result||'—'}</span>
           ${e.emotion?`<span class="jentry-emotion">${e.emotion}</span>`:''}
