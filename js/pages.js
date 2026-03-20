@@ -1057,6 +1057,8 @@ async function saveJournalEntry() {
       supabaseSaved++;
     } else {
       console.error('Save error:', error.code, error.message, error.details, error.hint);
+      // Show exact error on screen so user can see what Supabase is rejecting
+      showToast('DB Error ' + (error.code||'') + ': ' + (error.message||'unknown'), 'error');
 
       // Try without account_provider if that column is the issue
       if ((error.code === '42703') || (error.message||'').includes('account_provider')) {
