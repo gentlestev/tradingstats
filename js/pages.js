@@ -663,11 +663,39 @@ function openJournalModal() {
   setTimeout(() => preSelectJFirm(activeFirm), 30);
   // Focus date
   setTimeout(() => { document.getElementById('jDate')?.focus(); }, 60);
+  // Global paste listener — catches Ctrl+V anywhere inside the modal
+  overlay._pasteHandler = (e) => {
+    // Only intercept if the paste zone tab is active OR user is not in a text field
+    const active = document.activeElement;
+    const inTextField = active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT');
+    const pasteTabActive = document.getElementById('imgPanel_paste')?.style.display !== 'none';
+    if (pasteTabActive || !inTextField) {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault();
+          // Auto switch to paste tab if not already there
+          switchImgTab('paste');
+          setJournalImgFromPaste(item.getAsFile());
+          return;
+        }
+      }
+    }
+  };
+  document.addEventListener('paste', overlay._pasteHandler);
 }
 
 function closeJournalModal() {
   const overlay = document.getElementById('newJournalOverlay');
-  if (overlay) overlay.style.display = 'none';
+  if (overlay) {
+    overlay.style.display = 'none';
+    // Remove global paste listener
+    if (overlay._pasteHandler) {
+      document.removeEventListener('paste', overlay._pasteHandler);
+      overlay._pasteHandler = null;
+    }
+  }
 }
 
 function buildJournalModal() {
@@ -762,17 +790,64 @@ function buildJournalModal() {
         <!-- Screenshot -->
         <div class="field-group">
           <label class="field-label">Trade Screenshot <span style="color:var(--text-4);font-weight:400">(optional)</span></label>
-          <div id="jImgDrop" style="border:2px dashed var(--border2);border-radius:8px;padding:20px;text-align:center;cursor:pointer;transition:all .2s"
-            onclick="document.getElementById('jImgInput').click()"
-            ondragover="event.preventDefault();this.style.borderColor='var(--brand)';this.style.background='rgba(79,142,247,.04)'"
-            ondragleave="this.style.borderColor='var(--border2)';this.style.background=''"
-            ondrop="handleJournalImgDrop(event)">
-            <div id="jImgPreview" style="display:none;margin-bottom:8px">
-              <img id="jImgThumb" style="max-height:130px;border-radius:6px;max-width:100%" alt="preview"/>
-            </div>
-            <div id="jImgLabel" style="font-size:.78rem;color:var(--text-3)">📷 Drop screenshot here or tap to upload</div>
+
+          <!-- Method tabs -->
+          <div style="display:flex;gap:0;margin-bottom:8px;border:1.5px solid var(--border);border-radius:8px;overflow:hidden;background:var(--bg)">
+            <button id="imgTab_upload" onclick="switchImgTab('upload')"
+              style="flex:1;padding:7px;font-size:.7rem;font-weight:600;font-family:var(--f-mono);border:none;cursor:pointer;transition:all .18s;background:var(--brand);color:#fff">
+              📁 Upload / Drop
+            </button>
+            <button id="imgTab_paste" onclick="switchImgTab('paste')"
+              style="flex:1;padding:7px;font-size:.7rem;font-weight:600;font-family:var(--f-mono);border:none;cursor:pointer;transition:all .18s;background:transparent;color:var(--text-3)">
+              📋 Paste from Clipboard
+            </button>
           </div>
-          <input type="file" id="jImgInput" accept="image/*" style="display:none" onchange="handleJournalImgSelect(this.files)"/>
+
+          <!-- Upload / Drop tab -->
+          <div id="imgPanel_upload">
+            <div id="jImgDrop"
+              style="border:2px dashed var(--border2);border-radius:8px;padding:20px;text-align:center;cursor:pointer;transition:all .2s;position:relative"
+              onclick="document.getElementById('jImgInput').click()"
+              ondragover="event.preventDefault();this.style.borderColor='var(--brand)';this.style.background='rgba(79,142,247,.04)'"
+              ondragleave="this.style.borderColor='var(--border2)';this.style.background=''"
+              ondrop="handleJournalImgDrop(event)">
+              <div id="jImgPreview" style="display:none;margin-bottom:8px">
+                <img id="jImgThumb" style="max-height:130px;border-radius:6px;max-width:100%" alt="preview"/>
+              </div>
+              <div id="jImgLabel" style="font-size:.78rem;color:var(--text-3)">
+                📁 Drop screenshot here or <span style="color:var(--brand);text-decoration:underline">click to browse</span>
+              </div>
+            </div>
+            <input type="file" id="jImgInput" accept="image/*" style="display:none" onchange="handleJournalImgSelect(this.files)"/>
+          </div>
+
+          <!-- Paste tab -->
+          <div id="imgPanel_paste" style="display:none">
+            <div id="jPasteZone"
+              style="border:2px dashed var(--border2);border-radius:8px;padding:24px;text-align:center;transition:all .2s;position:relative;outline:none"
+              tabindex="0"
+              onclick="this.focus();showToast('Ready — now press Ctrl+V (or Cmd+V on Mac) to paste','info')"
+              onkeydown="handlePasteKey(event)"
+              onpaste="handlePasteEvent(event)"
+              onfocus="this.style.borderColor='var(--brand)';this.style.background='rgba(79,142,247,.04)'"
+              onblur="this.style.borderColor='var(--border2)';this.style.background=''">
+              <div id="jPastePreview" style="display:none;margin-bottom:8px">
+                <img id="jPasteThumb" style="max-height:130px;border-radius:6px;max-width:100%" alt="pasted image"/>
+              </div>
+              <div id="jPasteLabel" style="font-size:.78rem;color:var(--text-3);line-height:1.8">
+                📋 <strong style="color:var(--text)">Click here first</strong>, then press<br>
+                <span style="font-family:var(--f-mono);background:var(--bg);border:1px solid var(--border2);border-radius:4px;padding:2px 8px;font-size:.75rem">Ctrl + V</span>
+                &nbsp;or&nbsp;
+                <span style="font-family:var(--f-mono);background:var(--bg);border:1px solid var(--border2);border-radius:4px;padding:2px 8px;font-size:.75rem">⌘ + V</span>
+                &nbsp;to paste your screenshot
+              </div>
+            </div>
+            <p style="font-size:.62rem;color:var(--text-4);font-family:var(--f-mono);margin-top:5px">
+              Copy a screenshot (Win: Snipping Tool, Mac: Cmd+Ctrl+Shift+4, Phone: screenshot → copy) then paste above
+            </p>
+          </div>
+
+          <!-- Clear button (shared) -->
           <button id="jImgClear" style="display:none;margin-top:6px;background:none;border:none;color:var(--red);font-size:.7rem;cursor:pointer;font-family:var(--f-mono)" onclick="clearJournalImg()">✕ Remove image</button>
         </div>
 
@@ -801,46 +876,140 @@ function filterJournal(filter, btn) {
   btn.classList.add('active');
   loadJournalEntries();
 }
-// Journal image state
+// ── Journal image state ──
 let journalImgData = null;
 let journalImgMime = 'image/jpeg';
 
-function handleJournalImgDrop(e) {
+// Switch between upload and paste tabs
+function switchImgTab(tab) {
+  const uploadPanel = document.getElementById('imgPanel_upload');
+  const pastePanel  = document.getElementById('imgPanel_paste');
+  const tabUpload   = document.getElementById('imgTab_upload');
+  const tabPaste    = document.getElementById('imgTab_paste');
+  if (!uploadPanel || !pastePanel) return;
+  if (tab === 'upload') {
+    uploadPanel.style.display = 'block';
+    pastePanel.style.display  = 'none';
+    if (tabUpload) { tabUpload.style.background = 'var(--brand)'; tabUpload.style.color = '#fff'; }
+    if (tabPaste)  { tabPaste.style.background  = 'transparent'; tabPaste.style.color  = 'var(--text-3)'; }
+  } else {
+    uploadPanel.style.display = 'none';
+    pastePanel.style.display  = 'block';
+    if (tabPaste)  { tabPaste.style.background  = 'var(--brand)'; tabPaste.style.color = '#fff'; }
+    if (tabUpload) { tabUpload.style.background = 'transparent'; tabUpload.style.color = 'var(--text-3)'; }
+    // Auto-focus paste zone
+    setTimeout(() => document.getElementById('jPasteZone')?.focus(), 80);
+  }
+}
+
+// Handle keyboard paste (Ctrl+V / Cmd+V)
+function handlePasteKey(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+    // Let the paste event handle it — don't intercept here
+  }
+}
+
+// Handle actual paste event on the paste zone
+function handlePasteEvent(e) {
   e.preventDefault();
-  document.getElementById('jImgDrop').style.borderColor = 'var(--border2)';
-  const file = e.dataTransfer?.files?.[0];
-  if (file && file.type.startsWith('image/')) setJournalImg(file);
+  const items = (e.clipboardData || e.originalEvent?.clipboardData)?.items;
+  if (!items) { showToast('No clipboard data found', 'error'); return; }
+  let found = false;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (file) {
+        setJournalImgFromPaste(file);
+        found = true;
+        break;
+      }
+    }
+  }
+  if (!found) {
+    showToast('No image found in clipboard — copy a screenshot first', 'error');
+  }
 }
-function handleJournalImgSelect(files) {
-  if (files?.[0]) setJournalImg(files[0]);
-}
-function setJournalImg(file) {
+
+// Set image from paste (updates paste zone preview)
+function setJournalImgFromPaste(file) {
   const reader = new FileReader();
-  reader.onload = (e) => {
-    journalImgData = e.target.result; // base64 data URL
+  reader.onload = (ev) => {
+    journalImgData = ev.target.result;
     journalImgMime = file.type;
-    const thumb = document.getElementById('jImgThumb');
-    const preview = document.getElementById('jImgPreview');
-    const label = document.getElementById('jImgLabel');
+    // Update paste zone
+    const thumb    = document.getElementById('jPasteThumb');
+    const preview  = document.getElementById('jPastePreview');
+    const label    = document.getElementById('jPasteLabel');
     const clearBtn = document.getElementById('jImgClear');
-    if (thumb) { thumb.src = journalImgData; }
-    if (preview) preview.style.display = 'block';
-    if (label) label.textContent = '✓ ' + file.name;
-    if (clearBtn) clearBtn.style.display = 'inline-block';
+    const zone     = document.getElementById('jPasteZone');
+    if (thumb)    { thumb.src = journalImgData; }
+    if (preview)  { preview.style.display = 'block'; }
+    if (label)    { label.innerHTML = '✅ <strong style="color:var(--green)">Image pasted successfully!</strong><br><span style="font-size:.68rem;color:var(--text-3)">Paste again to replace</span>'; }
+    if (clearBtn) { clearBtn.style.display = 'inline-block'; }
+    if (zone)     { zone.style.borderColor = 'var(--green)'; zone.style.background = 'rgba(34,208,122,.04)'; }
+    showToast('✅ Screenshot pasted!', 'success');
   };
   reader.readAsDataURL(file);
 }
+
+// Handle file drop on drop zone
+function handleJournalImgDrop(e) {
+  e.preventDefault();
+  const dz = document.getElementById('jImgDrop');
+  if (dz) { dz.style.borderColor = 'var(--border2)'; dz.style.background = ''; }
+  const file = e.dataTransfer?.files?.[0];
+  if (file && file.type.startsWith('image/')) setJournalImg(file);
+  else showToast('Please drop an image file', 'error');
+}
+
+// Handle file input selection
+function handleJournalImgSelect(files) {
+  if (files?.[0]) setJournalImg(files[0]);
+}
+
+// Set image from file (updates upload zone preview)
+function setJournalImg(file) {
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    journalImgData = ev.target.result;
+    journalImgMime = file.type;
+    const thumb    = document.getElementById('jImgThumb');
+    const preview  = document.getElementById('jImgPreview');
+    const label    = document.getElementById('jImgLabel');
+    const clearBtn = document.getElementById('jImgClear');
+    if (thumb)    { thumb.src = journalImgData; }
+    if (preview)  { preview.style.display = 'block'; }
+    if (label)    { label.innerHTML = '✅ <strong style="color:var(--green)">' + file.name + '</strong> ready to save'; }
+    if (clearBtn) { clearBtn.style.display = 'inline-block'; }
+    showToast('✅ Screenshot ready!', 'success');
+  };
+  reader.readAsDataURL(file);
+}
+
+// Clear all image state
 function clearJournalImg() {
   journalImgData = null;
   journalImgMime = 'image/jpeg';
-  const preview = document.getElementById('jImgPreview');
-  const label = document.getElementById('jImgLabel');
+  // Reset upload zone
+  const preview  = document.getElementById('jImgPreview');
+  const label    = document.getElementById('jImgLabel');
   const clearBtn = document.getElementById('jImgClear');
-  const input = document.getElementById('jImgInput');
-  if (preview) preview.style.display = 'none';
-  if (label) label.textContent = '📷 Drop screenshot or click to upload';
-  if (clearBtn) clearBtn.style.display = 'none';
-  if (input) input.value = '';
+  const input    = document.getElementById('jImgInput');
+  if (preview)  { preview.style.display = 'none'; }
+  if (label)    { label.innerHTML = '📁 Drop screenshot here or <span style="color:var(--brand);text-decoration:underline">click to browse</span>'; }
+  if (clearBtn) { clearBtn.style.display = 'none'; }
+  if (input)    { input.value = ''; }
+  // Reset paste zone
+  const pasteThumb    = document.getElementById('jPasteThumb');
+  const pastePreview  = document.getElementById('jPastePreview');
+  const pasteLabel    = document.getElementById('jPasteLabel');
+  const pasteZone     = document.getElementById('jPasteZone');
+  if (pasteThumb)   { pasteThumb.src = ''; }
+  if (pastePreview) { pastePreview.style.display = 'none'; }
+  if (pasteLabel)   {
+    pasteLabel.innerHTML = '📋 <strong style="color:var(--text)">Click here first</strong>, then press<br><span style="font-family:var(--f-mono);background:var(--bg);border:1px solid var(--border2);border-radius:4px;padding:2px 8px;font-size:.75rem">Ctrl + V</span> &nbsp;or&nbsp; <span style="font-family:var(--f-mono);background:var(--bg);border:1px solid var(--border2);border-radius:4px;padding:2px 8px;font-size:.75rem">⌘ + V</span> &nbsp;to paste your screenshot';
+  }
+  if (pasteZone) { pasteZone.style.borderColor = 'var(--border2)'; pasteZone.style.background = ''; }
 }
 
 async function saveJournalEntry() {
