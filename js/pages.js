@@ -798,13 +798,16 @@ async function loadJournalEntries() {
   const filtered = firmFiltered.filter(e => { if(activeJournalFilter==='all')return true; if(activeJournalFilter==='win')return e.result==='Win'; if(activeJournalFilter==='loss')return e.result==='Loss'; if(activeJournalFilter==='be')return e.result==='Break Even'; return true; });
   container.innerHTML = filtered.map(e => {
     const badge = e.result==='Win'?'badge-win':e.result==='Loss'?'badge-loss':'badge-be';
-    return `<div class="jentry">
+    return `<div class="jentry" id="jcard-${e.id}" data-entry='${JSON.stringify({id:e.id,date:e.date,instrument:e.instrument,result:e.result,emotion:e.emotion,reasoning:e.reasoning,went_well:e.went_well,improve:e.improve,account_provider:e.account_provider||firmMap[e.date+"_"+e.instrument]||""}).replace(/'/g,"&#39;")}'>
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;flex-wrap:wrap;gap:6px">
         <div><div class="jentry-date">${e.date} · <span style="color:var(--text-3)">${e.account_provider || firmMap[e.date + '_' + e.instrument] || ''}</span></div><div class="jentry-instr">${e.instrument||'—'}</div></div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
           <span class="badge ${badge}">${e.result||'—'}</span>
           ${e.emotion?`<span class="jentry-emotion">${e.emotion}</span>`:''}
-          <button class="btn-sm btn-danger-sm" onclick="deleteJournalEntry('${e.id}')" style="padding:2px 7px;font-size:.58rem">✕</button>
+          <div style="display:flex;gap:4px">
+            <button class="btn-sm btn-outline-sm" onclick="openEditJournal('${e.id}')" style="padding:2px 9px;font-size:.62rem" title="Edit entry">✏️</button>
+            <button class="btn-sm btn-danger-sm" onclick="deleteJournalEntry('${e.id}')" style="padding:2px 9px;font-size:.62rem" title="Delete entry">🗑</button>
+          </div>
         </div>
       </div>
       ${e.reasoning?`<div class="jentry-section"><div class="jentry-section-label">Why I Entered</div><div class="jentry-text">${e.reasoning}</div></div>`:''}
@@ -814,9 +817,246 @@ async function loadJournalEntries() {
     </div>`;
   }).join('') || `<div style="text-align:center;padding:24px;color:var(--text-3);font-size:.75rem">No ${activeJournalFilter} entries found.</div>`;
 }
+// ── Open edit modal ──
+function openEditJournal(id) {
+  // Read entry data from the card's data attribute — no extra DB call needed
+  const card = document.getElementById('jcard-' + id);
+  if (!card) { showToast('Entry not found', 'error'); return; }
+  let entry;
+  try { entry = JSON.parse(card.getAttribute('data-entry').replace(/&#39;/g,"'")); }
+  catch(e) { showToast('Could not read entry', 'error'); return; }
+
+  // Build the edit modal HTML
+  const instruments = [...new Set(getTradesForFirm(activeFirm).map(t => t.instrument).filter(Boolean))];
+  const instOpts = `<option value="">Select…</option>` +
+    instruments.map(i => `<option value="${i}" style="background:#131c28;color:#e8edf5" ${entry.instrument===i?'selected':''}>${i}</option>`).join('') +
+    `<option value="Other" style="background:#131c28;color:#e8edf5" ${entry.instrument==='Other'?'selected':''}>Other</option>`;
+  const resultOpts = ['Win','Loss','Break Even'].map(r =>
+    `<option value="${r}" style="background:#131c28;color:#e8edf5" ${entry.result===r?'selected':''}>${r}</option>`).join('');
+  const emotions = ['😌 Calm','💪 Confident','😰 FOMO','😤 Revenge','😟 Anxious','😑 Bored'];
+  const emotionBtns = emotions.map(em =>
+    `<button class="emotion-btn ${entry.emotion===em?'selected':''}" onclick="selectEditEmotion(this,'${em.replace(/'/g,"\'")}')">${em}</button>`
+  ).join('');
+  // Show existing screenshot
+  const imgKey = 'ts_jimg_' + (entry.date||'') + '_' + (entry.instrument||'').replace(/\s/g,'');
+  const existingImg = localStorage.getItem(imgKey);
+
+  // Create or reuse modal overlay
+  let overlay = document.getElementById('editJournalOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'editJournalOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.75);backdrop-filter:blur(6px);display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto';
+    overlay.onclick = (e) => { if (e.target === overlay) closeEditJournal(); };
+    document.body.appendChild(overlay);
+  }
+
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border:1.5px solid var(--border2);border-radius:14px;width:700px;max-width:100%;margin:auto;box-shadow:0 20px 60px rgba(0,0,0,.7);animation:scaleIn .22s ease both">
+      <!-- Header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);background:var(--surface2);border-radius:14px 14px 0 0">
+        <div>
+          <div style="font-family:var(--f-disp);font-size:1.2rem;font-weight:800;color:var(--text)">Edit Journal Entry</div>
+          <div style="font-size:.68rem;color:var(--text-3);margin-top:2px;font-family:var(--f-mono)">${entry.instrument||'—'} · ${entry.date||'—'}</div>
+        </div>
+        <button onclick="closeEditJournal()" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:22px;line-height:1;padding:4px">✕</button>
+      </div>
+
+      <!-- Body -->
+      <div style="padding:20px;display:flex;flex-direction:column;gap:16px">
+
+        <!-- Date / Instrument / Result -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+          <div class="field-group">
+            <label class="field-label">Date</label>
+            <input type="date" class="field-input" id="ej_date" value="${entry.date||''}"/>
+          </div>
+          <div class="field-group">
+            <label class="field-label">Instrument</label>
+            <select class="field-input" id="ej_instrument" style="background:var(--bg);color:var(--text)">${instOpts}</select>
+          </div>
+          <div class="field-group">
+            <label class="field-label">Result</label>
+            <select class="field-input" id="ej_result" style="background:var(--bg);color:var(--text)">
+              <option value="" style="background:#131c28">Select…</option>
+              ${resultOpts}
+            </select>
+          </div>
+        </div>
+
+        <!-- Emotion -->
+        <div class="field-group">
+          <label class="field-label">Emotion Before Trade</label>
+          <div class="emotion-grid" id="editEmotionGrid" style="margin-top:6px">${emotionBtns}</div>
+        </div>
+
+        <!-- Notes -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+          <div class="field-group">
+            <label class="field-label">Why I Entered</label>
+            <textarea class="field-input field-textarea" id="ej_reason" style="min-height:90px" placeholder="Setup, confluences…">${entry.reasoning||''}</textarea>
+          </div>
+          <div class="field-group">
+            <label class="field-label">What Went Well</label>
+            <textarea class="field-input field-textarea" id="ej_well" style="min-height:90px" placeholder="Discipline, execution…">${entry.went_well||''}</textarea>
+          </div>
+          <div class="field-group">
+            <label class="field-label">What To Improve</label>
+            <textarea class="field-input field-textarea" id="ej_improve" style="min-height:90px" placeholder="Mistakes, lessons…">${entry.improve||''}</textarea>
+          </div>
+        </div>
+
+        <!-- Screenshot -->
+        <div class="field-group">
+          <label class="field-label">Trade Screenshot</label>
+          <div id="ej_imgDrop" style="border:2px dashed var(--border2);border-radius:8px;padding:16px;text-align:center;cursor:pointer;transition:all .2s"
+            onclick="document.getElementById('ej_imgInput').click()"
+            ondragover="event.preventDefault();this.style.borderColor='var(--brand)'"
+            ondragleave="this.style.borderColor='var(--border2)'"
+            ondrop="handleEditImgDrop(event,'${entry.date||''}','${(entry.instrument||'').replace(/'/g,'')}')" >
+            ${existingImg
+              ? `<img src="${existingImg}" style="max-height:140px;max-width:100%;border-radius:6px;margin-bottom:6px" id="ej_imgThumb"/>
+                 <div style="font-size:.7rem;color:var(--green)">✓ Screenshot attached — click/drop to replace</div>`
+              : `<div style="font-size:.75rem;color:var(--text-3)">📷 Drop screenshot or tap to upload</div>`
+            }
+          </div>
+          <input type="file" id="ej_imgInput" accept="image/*" style="display:none"
+            onchange="handleEditImgSelect(this.files,'${entry.date||''}','${(entry.instrument||'').replace(/'/g,'')}')"/>
+        </div>
+
+        <!-- Actions -->
+        <div style="display:flex;gap:10px;margin-top:4px">
+          <button class="btn-ghost" onclick="closeEditJournal()" style="flex:1">Cancel</button>
+          <button class="btn-primary" onclick="saveEditJournal('${id}')" style="flex:2;width:auto">💾 Save Changes</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  overlay.style.display = 'flex';
+  // Store current edit emotion
+  window._editEmotion = entry.emotion || '';
+  document.getElementById('ej_date').focus();
+}
+
+function closeEditJournal() {
+  const overlay = document.getElementById('editJournalOverlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function selectEditEmotion(btn, em) {
+  document.querySelectorAll('#editEmotionGrid .emotion-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  window._editEmotion = em;
+}
+
+function handleEditImgDrop(e, date, instrument) {
+  e.preventDefault();
+  document.getElementById('ej_imgDrop').style.borderColor = 'var(--border2)';
+  const file = e.dataTransfer?.files?.[0];
+  if (file && file.type.startsWith('image/')) applyEditImg(file, date, instrument);
+}
+function handleEditImgSelect(files, date, instrument) {
+  if (files?.[0]) applyEditImg(files[0], date, instrument);
+}
+function applyEditImg(file, date, instrument) {
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    // Store new image
+    const imgKey = 'ts_jimg_' + date + '_' + instrument.replace(/\s/g,'');
+    try { localStorage.setItem(imgKey, ev.target.result); } catch(e) {}
+    // Update preview
+    const thumb = document.getElementById('ej_imgThumb');
+    const drop  = document.getElementById('ej_imgDrop');
+    if (thumb) { thumb.src = ev.target.result; }
+    else if (drop) {
+      drop.innerHTML = `<img src="${ev.target.result}" style="max-height:140px;max-width:100%;border-radius:6px;margin-bottom:6px" id="ej_imgThumb"/>
+        <div style="font-size:.7rem;color:var(--green)">✓ Screenshot updated</div>`;
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+// ── Save edit ──
+async function saveEditJournal(id) {
+  const date       = document.getElementById('ej_date')?.value;
+  const instrument = document.getElementById('ej_instrument')?.value;
+  const result     = document.getElementById('ej_result')?.value;
+  const emotion    = window._editEmotion || '';
+  const reasoning  = document.getElementById('ej_reason')?.value   || '';
+  const went_well  = document.getElementById('ej_well')?.value     || '';
+  const improve    = document.getElementById('ej_improve')?.value  || '';
+
+  if (!date || !instrument || !result) {
+    showToast('Date, instrument and result are required', 'error'); return;
+  }
+
+  const btn = document.querySelector('#editJournalOverlay .btn-primary');
+  if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
+
+  const updates = { date, instrument, result, emotion, reasoning, went_well, improve };
+
+  let saved = false;
+
+  // ── Update local entry if it's a local one ──
+  if (String(id).startsWith('local_')) {
+    const localEntries = JSON.parse(localStorage.getItem('ts_local_journal') || '[]');
+    const idx = localEntries.findIndex(e => e.id === id);
+    if (idx !== -1) {
+      localEntries[idx] = { ...localEntries[idx], ...updates };
+      try { localStorage.setItem('ts_local_journal', JSON.stringify(localEntries)); saved = true; } catch(e) {}
+    }
+  }
+
+  // ── Update in Supabase (remote entry) ──
+  if (!saved && currentUser) {
+    const { error } = await sb.from('journal_entries')
+      .update(updates)
+      .eq('id', id)
+      .eq('user_id', currentUser.id);
+
+    if (!error) {
+      saved = true;
+    } else {
+      // Try without emotion if column doesn't exist
+      const { date: d2, instrument: i2, result: r2, reasoning: rs2, went_well: w2, improve: im2 } = updates;
+      const { error: e2 } = await sb.from('journal_entries')
+        .update({ date: d2, instrument: i2, result: r2, reasoning: rs2, went_well: w2, improve: im2 })
+        .eq('id', id)
+        .eq('user_id', currentUser.id);
+      if (!e2) saved = true;
+    }
+  }
+
+  if (btn) { btn.textContent = '💾 Save Changes'; btn.disabled = false; }
+
+  if (saved) {
+    showToast('Entry updated successfully!', 'success');
+    closeEditJournal();
+    loadJournalEntries();
+  } else {
+    showToast('Could not update entry. Try again.', 'error');
+  }
+}
+
+// ── Delete entry ──
 async function deleteJournalEntry(id) {
-  if (!currentUser || !confirm('Delete this entry?')) return;
-  await sb.from('journal_entries').delete().eq('id', id).eq('user_id', currentUser.id);
+  if (!confirm('Delete this journal entry? This cannot be undone.')) return;
+
+  // Delete from local storage if local entry
+  if (String(id).startsWith('local_')) {
+    const localEntries = JSON.parse(localStorage.getItem('ts_local_journal') || '[]');
+    const filtered = localEntries.filter(e => e.id !== id);
+    localStorage.setItem('ts_local_journal', JSON.stringify(filtered));
+    showToast('Entry deleted.', 'success');
+    loadJournalEntries();
+    return;
+  }
+
+  // Delete from Supabase
+  if (!currentUser) return;
+  const { error } = await sb.from('journal_entries').delete().eq('id', id).eq('user_id', currentUser.id);
+  if (error) { showToast('Error: ' + error.message, 'error'); return; }
   showToast('Entry deleted.', 'success');
   loadJournalEntries();
 }
