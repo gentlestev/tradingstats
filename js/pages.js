@@ -95,8 +95,13 @@ function renderDashboard(trades) {
       </div>
       <div class="widget w-green">
         <div class="widget-label">Best Trade</div>
-        <div class="widget-value">+$${s.best.toFixed(0)}</div>
+        <div class="widget-value">${trades.length ? '+$'+Math.max(0,s.best).toFixed(0) : '—'}</div>
         <div class="widget-sub">Largest win</div>
+      </div>
+      <div class="widget w-red">
+        <div class="widget-label">Worst Trade</div>
+        <div class="widget-value">${trades.length ? '-$'+Math.abs(Math.min(0,s.worst)).toFixed(0) : '—'}</div>
+        <div class="widget-sub">Largest loss</div>
       </div>
       <div class="widget ${s.streak>0?'w-green':s.streak<0?'w-red':'w-blue'}">
         <div class="widget-label">Streak</div>
@@ -177,6 +182,19 @@ function updateStartBal(val) {
   renderEquityCurve('eqChart', trades, n, 'eqValBadge');
 }
 
+function resetEqZoom() {
+  const chart = Chart.getChart('eqChart');
+  if (chart && chart.resetZoom) chart.resetZoom();
+}
+
+function autoDetectFirm(text) {
+  const t = (text || '').toLowerCase();
+  if (t.includes('ftmo')) return 'FTMO';
+  if (t.includes('deriv') || t.includes('dxtrade') || t.includes('deriv-')) return 'Deriv';
+  if (t.includes('5ers') || t.includes('the5ers')) return 'The5ers';
+  return null;
+}
+
 // ══ HISTORY ══
 function renderHistory(trades) {
   const c = document.getElementById('pageContent');
@@ -236,6 +254,8 @@ function renderTradeTableHTML(trades, title, compact = false, showDelete = false
 let parsedBatch = { csv: [], img: [], paste: [] };
 
 function renderUpload() {
+  // Reset batch state when the page is re-rendered so stale data can't be re-saved
+  parsedBatch = { csv: [], img: [], paste: [] };
   const c = document.getElementById('pageContent');
   const firmOpts = FIRMS.map(f => `<option value="${f}">${f}</option>`).join('');
   c.innerHTML = `
@@ -620,17 +640,8 @@ function getSelectedJFirms() {
 }
 
 function preSelectJFirm(firm) {
-  // Auto-check the current active firm
+  // Auto-check the current active firm — set state directly, no toggle needed
   const target = (firm === 'All') ? 'Other' : firm;
-  ['Deriv','FTMO','The5ers','Other'].forEach(f => {
-    const cb    = document.getElementById('jfirm_' + f);
-    const label = document.getElementById('jfirm_label_' + f);
-    if (!cb || !label) return;
-    cb.checked = (f === target);
-    toggleJFirm(f, label);
-    // toggleJFirm toggles, so call again if we need to force state
-  });
-  // Make sure selected state is correct (toggleJFirm flips, set directly)
   ['Deriv','FTMO','The5ers','Other'].forEach(f => {
     const cb    = document.getElementById('jfirm_' + f);
     const label = document.getElementById('jfirm_label_' + f);
@@ -639,13 +650,13 @@ function preSelectJFirm(firm) {
     if (!cb || !label) return;
     const sel = (f === target);
     cb.checked                = sel;
-    label.style.background    = sel ? 'var(--brand-bg)'   : 'var(--surface2)';
-    label.style.borderColor   = sel ? 'rgba(79,142,247,.3)': 'var(--border)';
+    label.style.background    = sel ? 'var(--brand-bg)'        : 'var(--surface2)';
+    label.style.borderColor   = sel ? 'rgba(79,142,247,.3)'    : 'var(--border)';
     tick.textContent          = sel ? '✓' : '';
-    tick.style.background     = sel ? 'var(--brand)' : 'var(--bg)';
-    tick.style.borderColor    = sel ? 'var(--brand)' : 'var(--border2)';
-    tick.style.color          = sel ? '#fff'         : '';
-    txt.style.color           = sel ? 'var(--brand)' : 'var(--text-3)';
+    tick.style.background     = sel ? 'var(--brand)'           : 'var(--bg)';
+    tick.style.borderColor    = sel ? 'var(--brand)'           : 'var(--border2)';
+    tick.style.color          = sel ? '#fff'                   : '';
+    txt.style.color           = sel ? 'var(--brand)'           : 'var(--text-3)';
   });
 }
 
@@ -653,6 +664,9 @@ function openJournalModal() {
   // Always rebuild modal so instrument list reflects current firm
   const existing = document.getElementById('newJournalOverlay');
   if (existing) existing.remove();
+  // Clear stale image data from any previous modal session
+  journalImgData = null;
+  journalImgMime = 'image/jpeg';
   buildJournalModal();
   const overlay = document.getElementById('newJournalOverlay');
   overlay.style.display = 'flex';
@@ -1319,9 +1333,6 @@ function openImgLightbox(imgKey) {
     // Mouse wheel zoom
     lb.addEventListener('wheel', (ev) => { ev.preventDefault(); lbZoom(ev.deltaY < 0 ? 1 : -1, 0.15); }, { passive: false });
 
-    // Keyboard
-    document.addEventListener('keydown', lbKeyHandler);
-
     // Drag to pan
     const img = lb.querySelector('#lbImg');
     img.addEventListener('mousedown', lbDragStart);
@@ -1340,6 +1351,9 @@ function openImgLightbox(imgKey) {
   document.getElementById('lbImg').style.transform = 'translate(0,0) scale(1)';
   lb.style.display = 'flex';
   document.body.style.overflow = 'hidden';
+  // Re-attach keyboard handler each open (was removed on close)
+  document.removeEventListener('keydown', lbKeyHandler);
+  document.addEventListener('keydown', lbKeyHandler);
   setTimeout(() => { document.getElementById('lbHint').style.opacity = '1'; setTimeout(() => { const h = document.getElementById('lbHint'); if(h) h.style.opacity='0'; }, 3000); }, 200);
 }
 
@@ -2215,52 +2229,4 @@ function drawDisciplineGauge(id, score) {
   ctx.fillText('0%',   cx - r + 4, cy + 14);
   ctx.fillText('50%',  cx,         cy - r - 4);
   ctx.fillText('100%', cx + r - 4, cy + 14);
-}
-
-// ── Objective row helper ──
-function objRow(label, limit, result, pass) {
-  const icon = pass
-    ? '<div style="width:22px;height:22px;background:rgba(34,208,122,.2);border:1px solid rgba(34,208,122,.4);border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--green);font-size:.75rem;font-weight:700;margin:0 auto">✓</div>'
-    : '<div style="width:22px;height:22px;background:rgba(245,75,94,.2);border:1px solid rgba(245,75,94,.4);border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--red);font-size:.75rem;font-weight:700;margin:0 auto">✗</div>';
-  return `<tr>
-    <td style="color:var(--brand);font-weight:600">${label}</td>
-    <td style="font-family:var(--f-mono);font-size:.72rem;color:var(--text-2)">${limit}</td>
-    <td style="font-family:var(--f-mono);font-size:.72rem;color:var(--text)">${result}</td>
-    <td style="text-align:center">${icon}</td>
-  </tr>`;
-}
-
-// ── Quick stat box helper ──
-function quickStatBox(label, value, valueColor) {
-  return `<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r);padding:16px 18px;text-align:center">
-    <div style="font-size:.7rem;color:var(--text-3);margin-bottom:6px;font-family:var(--f-mono)">${label}</div>
-    <div style="font-family:var(--f-disp);font-size:1.3rem;font-weight:800;color:${valueColor}">${value}</div>
-  </div>`;
-}
-
-// ── Stat cell helper ──
-function statCell(label, value, valueColor) {
-  return `<div style="background:var(--surface);padding:14px;text-align:center">
-    <div style="font-size:.62rem;color:var(--text-3);margin-bottom:5px;font-family:var(--f-mono)">${label}</div>
-    <div style="font-family:var(--f-disp);font-size:1rem;font-weight:800;color:${valueColor}">${value}</div>
-  </div>`;
-}
-
-// ── Settings toggle & save ──
-function toggleObjSettings() {
-  const panel = document.getElementById('objSettingsPanel');
-  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-}
-function saveObjSettings(firm) {
-  const cfg = {
-    balance:       parseFloat(document.getElementById('cfg_balance').value) || 100000,
-    dailyLoss:     parseFloat(document.getElementById('cfg_daily').value)   || 5,
-    maxLoss:       parseFloat(document.getElementById('cfg_max').value)     || 10,
-    profitTarget:  parseFloat(document.getElementById('cfg_profit').value)  || 10,
-    minDays:       parseInt(document.getElementById('cfg_days').value)      || 4
-  };
-  localStorage.setItem('ts_obj_' + firm, JSON.stringify(cfg));
-  showToast('Limits saved for ' + firm + '!', 'success');
-  toggleObjSettings();
-  renderPage('objectives');
 }

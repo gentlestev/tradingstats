@@ -25,7 +25,7 @@ function parseMT5Html(html) {
       if (dir !== 'buy' && dir !== 'sell') return;
       const pnl = cleanNum(cells[12]);
       const price = cleanNum(cells[6]);
-      fmt_b.push({ date: cells[0].slice(0,10).replace(/\./g,'-'), instrument: cells[2]||'Unknown', direction: dir==='sell'?'Buy':'Sell', entry_price: price, exit_price: price, profit_loss: pnl, result: pnl>0?'Win':pnl<0?'Loss':'Break Even' });
+      fmt_b.push({ date: cells[0].slice(0,10).replace(/\./g,'-'), instrument: cells[2]||'Unknown', direction: dir==='sell'?'Sell':'Buy', entry_price: price, exit_price: price, profit_loss: pnl, result: pnl>0?'Win':pnl<0?'Loss':'Break Even' });
     }
   });
   return fmt_a.length > 0 ? fmt_a : fmt_b;
