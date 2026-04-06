@@ -14,7 +14,7 @@ function destroyChart(id) {
   if (c) c.destroy();
 }
 
-// Equity curve with green/red fill (FTMO-style)
+// Equity curve with green/red fill (FTMO-style smooth)
 function renderEquityCurve(canvasId, trades, startBal = 0, valElId = null) {
   destroyChart(canvasId);
   const canvas = document.getElementById(canvasId);
@@ -32,15 +32,58 @@ function renderEquityCurve(canvasId, trades, startBal = 0, valElId = null) {
       el.style.color = diff >= 0 ? 'var(--green)' : 'var(--red)';
     }
   }
+
+  // Build a smooth path from data points using Catmull-Rom → bezier conversion.
+  // This runs independently of Chart.js internals so smoothness is guaranteed.
+  function buildSmoothPath(cx, pts, tension) {
+    if (!pts.length) return;
+    cx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[Math.max(i - 1, 0)];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const p3 = pts[Math.min(i + 2, pts.length - 1)];
+      const cp1x = p1.x + (p2.x - p0.x) * tension;
+      const cp1y = p1.y + (p2.y - p0.y) * tension;
+      const cp2x = p2.x - (p3.x - p1.x) * tension;
+      const cp2y = p2.y - (p3.y - p1.y) * tension;
+      cx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+    }
+  }
+
   const chart = new Chart(canvas.getContext('2d'), {
     type: 'line',
-    data: { labels, datasets: [{ data, borderColor: 'transparent', backgroundColor: 'transparent', borderWidth: 0, pointRadius: 0, pointHoverRadius: 5, pointHoverBackgroundColor: '#4f8ef7', fill: false, tension: 0.3 }] },
+    data: {
+      labels,
+      datasets: [{
+        data,
+        // Invisible dataset — we draw our own smooth coloured line in the plugin
+        borderColor: 'transparent',
+        backgroundColor: 'transparent',
+        borderWidth: 0,
+        pointRadius: 0,
+        pointHoverRadius: 5,
+        pointHoverBackgroundColor: '#4f8ef7',
+        fill: false,
+        tension: 0   // keep 0 here — smoothness is handled by our own Catmull-Rom
+      }]
+    },
     options: {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
-        tooltip: { ...CHART_DEFAULTS.tooltip, callbacks: { label: ctx => { const v = ctx.parsed.y; const diff = v - startBal; return 'Balance: $' + v.toLocaleString('en-US',{minimumFractionDigits:2}) + (startBal ? ' (' + (diff>=0?'+':'') + diff.toFixed(2) + ')' : ''); } } },
+        tooltip: {
+          ...CHART_DEFAULTS.tooltip,
+          callbacks: {
+            label: ctx => {
+              const v = ctx.parsed.y;
+              const diff = v - startBal;
+              return 'Balance: $' + v.toLocaleString('en-US', { minimumFractionDigits: 2 }) +
+                (startBal ? ' (' + (diff >= 0 ? '+' : '') + diff.toFixed(2) + ')' : '');
+            }
+          }
+        },
         zoom: {
           pan:  { enabled: true, mode: 'x', threshold: 5 },
           zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
@@ -49,7 +92,7 @@ function renderEquityCurve(canvasId, trades, startBal = 0, valElId = null) {
       },
       scales: {
         x: { ticks: { ...CHART_DEFAULTS.ticks, maxTicksLimit: 8 }, grid: CHART_DEFAULTS.grid },
-        y: { ticks: { ...CHART_DEFAULTS.ticks, callback: v => '$'+v.toLocaleString() }, grid: CHART_DEFAULTS.grid }
+        y: { ticks: { ...CHART_DEFAULTS.ticks, callback: v => '$' + v.toLocaleString() }, grid: CHART_DEFAULTS.grid }
       }
     },
     plugins: [{
@@ -58,45 +101,64 @@ function renderEquityCurve(canvasId, trades, startBal = 0, valElId = null) {
         const { ctx: cx, chartArea: { left, right, top, bottom }, scales: { y } } = chart;
         const meta = chart.getDatasetMeta(0);
         if (!meta.data.length) return;
-        const baseY = startBal ? Math.max(top, Math.min(bottom, y.getPixelForValue(startBal))) : bottom;
-        function drawPath(pts) {
-          if (!pts.length) return;
-          cx.moveTo(pts[0].x, pts[0].y);
-          for (let i = 1; i < pts.length; i++) {
-            const p = pts[i-1], c = pts[i];
-            const cp1x = p.cp2x != null ? p.cp2x : (p.x+c.x)/2;
-            const cp1y = p.cp2y != null ? p.cp2y : p.y;
-            const cp2x = c.cp1x != null ? c.cp1x : (p.x+c.x)/2;
-            const cp2y = c.cp1y != null ? c.cp1y : c.y;
-            cx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, c.x, c.y);
-          }
-        }
-        // Green fill above baseline
-        cx.save(); cx.beginPath(); cx.rect(left, top, right-left, baseY-top); cx.clip();
-        cx.beginPath(); drawPath(meta.data); cx.lineTo(meta.data[meta.data.length-1].x, baseY); cx.lineTo(meta.data[0].x, baseY); cx.closePath();
-        cx.fillStyle = 'rgba(34,208,122,.14)'; cx.fill(); cx.restore();
-        // Red fill below baseline
-        cx.save(); cx.beginPath(); cx.rect(left, baseY, right-left, bottom-baseY); cx.clip();
-        cx.beginPath(); drawPath(meta.data); cx.lineTo(meta.data[meta.data.length-1].x, bottom); cx.lineTo(meta.data[0].x, bottom); cx.closePath();
-        cx.fillStyle = 'rgba(245,75,94,.14)'; cx.fill(); cx.restore();
-        // Green line above
-        cx.save(); cx.beginPath(); cx.rect(left, top, right-left, baseY-top); cx.clip();
-        cx.beginPath(); drawPath(meta.data); cx.strokeStyle = '#22d07a'; cx.lineWidth = 2; cx.lineJoin = 'round'; cx.stroke(); cx.restore();
-        // Red line below
-        cx.save(); cx.beginPath(); cx.rect(left, baseY, right-left, bottom-baseY); cx.clip();
-        cx.beginPath(); drawPath(meta.data); cx.strokeStyle = '#f54b5e'; cx.lineWidth = 2; cx.lineJoin = 'round'; cx.stroke(); cx.restore();
-        // Baseline
+
+        // Pixel coords of each data point
+        const pts = meta.data.map(pt => ({ x: pt.x, y: pt.y }));
+        const baseY = startBal
+          ? Math.max(top, Math.min(bottom, y.getPixelForValue(startBal)))
+          : bottom;
+
+        const TENSION = 0.18; // lower = tighter to data, 0.18 matches FTMO feel
+
+        // ── Green fill above baseline ──
+        cx.save();
+        cx.beginPath(); cx.rect(left, top, right - left, baseY - top); cx.clip();
+        cx.beginPath(); buildSmoothPath(cx, pts, TENSION);
+        cx.lineTo(pts[pts.length - 1].x, baseY);
+        cx.lineTo(pts[0].x, baseY);
+        cx.closePath();
+        cx.fillStyle = 'rgba(34,208,122,.13)'; cx.fill(); cx.restore();
+
+        // ── Red fill below baseline ──
+        cx.save();
+        cx.beginPath(); cx.rect(left, baseY, right - left, bottom - baseY); cx.clip();
+        cx.beginPath(); buildSmoothPath(cx, pts, TENSION);
+        cx.lineTo(pts[pts.length - 1].x, bottom);
+        cx.lineTo(pts[0].x, bottom);
+        cx.closePath();
+        cx.fillStyle = 'rgba(245,75,94,.13)'; cx.fill(); cx.restore();
+
+        // ── Green stroke above baseline ──
+        cx.save();
+        cx.beginPath(); cx.rect(left, top, right - left, baseY - top); cx.clip();
+        cx.beginPath(); buildSmoothPath(cx, pts, TENSION);
+        cx.strokeStyle = '#22d07a'; cx.lineWidth = 2.5; cx.lineJoin = 'round'; cx.lineCap = 'round';
+        cx.stroke(); cx.restore();
+
+        // ── Red stroke below baseline ──
+        cx.save();
+        cx.beginPath(); cx.rect(left, baseY, right - left, bottom - baseY); cx.clip();
+        cx.beginPath(); buildSmoothPath(cx, pts, TENSION);
+        cx.strokeStyle = '#f54b5e'; cx.lineWidth = 2.5; cx.lineJoin = 'round'; cx.lineCap = 'round';
+        cx.stroke(); cx.restore();
+
+        // ── Baseline dashed rule ──
         if (startBal) {
-          cx.save(); cx.setLineDash([5,4]); cx.strokeStyle = 'rgba(156,174,200,.2)'; cx.lineWidth = 1;
+          cx.save();
+          cx.setLineDash([5, 4]);
+          cx.strokeStyle = 'rgba(156,174,200,.2)'; cx.lineWidth = 1;
           cx.beginPath(); cx.moveTo(left, baseY); cx.lineTo(right, baseY); cx.stroke();
-          cx.fillStyle = 'rgba(156,174,200,.35)'; cx.font = "9px 'Space Mono',monospace"; cx.textAlign = 'right';
-          cx.fillText('$'+startBal.toLocaleString(), right-4, baseY-4); cx.restore();
+          cx.fillStyle = 'rgba(156,174,200,.35)';
+          cx.font = "9px 'Space Mono',monospace"; cx.textAlign = 'right';
+          cx.fillText('$' + startBal.toLocaleString(), right - 4, baseY - 4);
+          cx.restore();
         }
       }
     }]
   });
+
   window._eqChart = chart;
-  canvas.ondblclick = () => { if(window._eqChart?.resetZoom) window._eqChart.resetZoom(); };
+  canvas.ondblclick = () => { if (window._eqChart?.resetZoom) window._eqChart.resetZoom(); };
 }
 
 function resetEqZoom() {
