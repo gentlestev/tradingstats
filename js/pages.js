@@ -223,7 +223,7 @@ function renderTradeTableHTML(trades, title, compact = false, showDelete = false
   if (!trades.length) return `<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No trades yet</div><div class="empty-sub">Import trades to see your history.</div><button class="btn-primary" onclick="navTo('upload')" style="width:auto;margin:0 auto">Import Trades</button></div>`;
   const rows = trades.slice(0, compact ? 8 : 9999).map(t => {
     const pnl = parseFloat(t.profit_loss||0);
-    const badge = t.result==='Win'?'badge-win':t.result==='Loss'?'badge-loss':'badge-be';
+    const _pnl226=parseFloat(t.profit_loss||0); const badge = _pnl226>0?'badge-win':_pnl226<0?'badge-loss':'badge-be';
     const pc = pnl>=0?'var(--green)':'var(--red)';
     const del = showDelete ? `<td><button class="btn-sm btn-danger-sm" onclick="deleteTrade('${t.id}')" style="padding:3px 7px">✕</button></td>` : '';
     return `<tr>
@@ -435,7 +435,7 @@ function showPreview(type, trades) {
       <td style="color:var(--brand-l);font-weight:600">${t.instrument}</td>
       <td>${t.direction||'—'}</td>
       <td style="color:${pnl>=0?'var(--green)':'var(--red)'};font-weight:700;font-family:var(--f-mono)">${pnl>=0?'+':''}$${pnl.toFixed(2)}</td>
-      <td><span class="badge ${t.result==='Win'?'badge-win':t.result==='Loss'?'badge-loss':'badge-be'}">${t.result}</span></td>
+      <td><span class="badge ${parseFloat(t.profit_loss||0)>0?'badge-win':parseFloat(t.profit_loss||0)<0?'badge-loss':'badge-be'}">${parseFloat(t.profit_loss||0)>0?'Win':parseFloat(t.profit_loss||0)<0?'Loss':'Break Even'}</span></td>
     </tr>`;
   }).join('') + (trades.length>15?`<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:6px">…and ${trades.length-15} more</td></tr>`:'');
   table.innerHTML = `<table class="data-table" style="font-size:.72rem"><thead><tr><th>Date</th><th>Instrument</th><th>Dir</th><th>P&L</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>`;
@@ -476,7 +476,7 @@ function renderAnalysis(trades) {
   const c = document.getElementById('pageContent');
   // By instrument
   const byInst = {};
-  trades.forEach(t => { if (!byInst[t.instrument]) byInst[t.instrument]={w:0,l:0,pnl:0}; byInst[t.instrument].pnl+=parseFloat(t.profit_loss||0); if(t.result==='Win')byInst[t.instrument].w++;else if(t.result==='Loss')byInst[t.instrument].l++; });
+  trades.forEach(t => { if (!byInst[t.instrument]) byInst[t.instrument]={w:0,l:0,pnl:0}; const _p479=parseFloat(t.profit_loss||0); byInst[t.instrument].pnl+=_p479; if(_p479>0)byInst[t.instrument].w++;else if(_p479<0)byInst[t.instrument].l++; });
   const instBars = Object.entries(byInst).sort((a,b)=>(b[1].w+b[1].l)-(a[1].w+a[1].l)).slice(0,10).map(([inst,d])=>{
     const total=d.w+d.l, wr=total?(d.w/total*100).toFixed(0):0;
     const pnlColor=d.pnl>=0?'var(--green)':'var(--red)';
@@ -484,7 +484,7 @@ function renderAnalysis(trades) {
   }).join('');
   // Monthly table
   const byMonth = {};
-  trades.forEach(t => { const m=t.date?t.date.slice(0,7):'?'; if(!byMonth[m])byMonth[m]={pnl:0,w:0,l:0}; byMonth[m].pnl+=parseFloat(t.profit_loss||0); if(t.result==='Win')byMonth[m].w++;else if(t.result==='Loss')byMonth[m].l++; });
+  trades.forEach(t => { const m=t.date?t.date.slice(0,7):'?'; if(!byMonth[m])byMonth[m]={pnl:0,w:0,l:0}; const _p487=parseFloat(t.profit_loss||0); byMonth[m].pnl+=_p487; if(_p487>0)byMonth[m].w++;else if(_p487<0)byMonth[m].l++; });
   const monthRows = Object.entries(byMonth).sort().reverse().map(([m,d])=>`<tr><td style="font-family:var(--f-mono);font-size:.72rem">${m}</td><td style="color:${d.pnl>=0?'var(--green)':'var(--red)'};font-weight:700;font-family:var(--f-mono)">${d.pnl>=0?'+':''}$${d.pnl.toFixed(2)}</td><td>${d.w}</td><td>${d.l}</td><td>${d.w+d.l?(d.w/(d.w+d.l)*100).toFixed(0):0}%</td></tr>`).join('');
 
   c.innerHTML = `
@@ -1690,7 +1690,7 @@ function renderCalendar(trades) {
   const c = document.getElementById('pageContent');
   if (!trades.length) { c.innerHTML = `<div class="empty-state"><div class="empty-icon">📅</div><div class="empty-title">No trades to display</div><div class="empty-sub">Import trades to see your performance calendar.</div></div>`; return; }
   const dayMap = {};
-  trades.forEach(t => { if(!t.date) return; const d=t.date.slice(0,10); if(!dayMap[d])dayMap[d]={pnl:0,wins:0,losses:0,count:0}; dayMap[d].pnl+=parseFloat(t.profit_loss||0); dayMap[d].count++; if(t.result==='Win')dayMap[d].wins++;else if(t.result==='Loss')dayMap[d].losses++; });
+  trades.forEach(t => { if(!t.date) return; const d=t.date.slice(0,10); if(!dayMap[d])dayMap[d]={pnl:0,wins:0,losses:0,count:0}; const _p1693=parseFloat(t.profit_loss||0); dayMap[d].pnl+=_p1693; dayMap[d].count++; if(_p1693>0)dayMap[d].wins++;else if(_p1693<0)dayMap[d].losses++; });
   const tradeDates = Object.keys(dayMap).sort();
   const months = [...new Set(tradeDates.map(d => d.slice(0,7)))].sort();
   const totalPnl = Object.values(dayMap).reduce((s,d)=>s+d.pnl,0);

@@ -19,11 +19,17 @@ function renderEquityCurve(canvasId, trades, startBal = 0, valElId = null) {
   destroyChart(canvasId);
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
-  const sorted = trades.slice().sort((a,b) => a.date.localeCompare(b.date));
+  // FIX: sort by full datetime (open_datetime) so intra-day trades are in correct order
+  // This prevents jagged zigzags when multiple trades occur on the same date
+  const sorted = trades.slice().sort((a,b) => {
+    const da = (a.open_datetime || a.date || '').replace(/\./g,'-');
+    const db = (b.open_datetime || b.date || '').replace(/\./g,'-');
+    return da.localeCompare(db);
+  });
   const labels = ['Start'];
   let bal = startBal;
   const data = [startBal];
-  sorted.forEach(t => { bal += parseFloat(t.profit_loss||0); labels.push(t.date.slice(5)); data.push(parseFloat(bal.toFixed(2))); });
+  sorted.forEach(t => { bal += parseFloat(t.profit_loss||0); labels.push(t.date ? t.date.slice(5) : ''); data.push(parseFloat(bal.toFixed(2))); });
   if (valElId) {
     const el = document.getElementById(valElId);
     if (el) {
@@ -37,6 +43,12 @@ function renderEquityCurve(canvasId, trades, startBal = 0, valElId = null) {
   // This runs independently of Chart.js internals so smoothness is guaranteed.
   function buildSmoothPath(cx, pts, tension) {
     if (!pts.length) return;
+    // FIX: with fewer than 3 points Catmull-Rom produces no meaningful curve — draw straight
+    if (pts.length < 3) {
+      cx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) cx.lineTo(pts[i].x, pts[i].y);
+      return;
+    }
     cx.moveTo(pts[0].x, pts[0].y);
     for (let i = 0; i < pts.length - 1; i++) {
       const p0 = pts[Math.max(i - 1, 0)];

@@ -18,8 +18,10 @@ function getTradesForFirm(firm) {
 // Core stats calculator
 function calcStats(trades) {
   if (!trades.length) return { net:0, wins:0, losses:0, be:0, total:0, wr:0, pf:0, rrr:0, exp:0, best:0, worst:0, gw:0, gl:0, aw:0, al:0, streak:0 };
-  const wins   = trades.filter(t => t.result === 'Win');
-  const losses = trades.filter(t => t.result === 'Loss');
+  // FIX: derive win/loss from profit_loss value directly — handles legacy records
+  // with stale result field (e.g. Break Even trades that were actually losses after fees)
+  const wins   = trades.filter(t => parseFloat(t.profit_loss||0) > 0);
+  const losses = trades.filter(t => parseFloat(t.profit_loss||0) < 0);
   const net    = trades.reduce((s,t) => s + parseFloat(t.profit_loss||0), 0);
   const gw     = wins.reduce((s,t) => s + parseFloat(t.profit_loss||0), 0);
   const gl     = Math.abs(losses.reduce((s,t) => s + parseFloat(t.profit_loss||0), 0));
@@ -32,16 +34,22 @@ function calcStats(trades) {
   const vals   = trades.map(t => parseFloat(t.profit_loss||0));
   const best   = Math.max(...vals);
   const worst  = Math.min(...vals);
-  // current streak
-  const sorted = trades.slice().sort((a,b) => a.date.localeCompare(b.date));
+  // FIX: streak uses profit_loss sign, not result field, for consistency
+  const sortedS = trades.slice().sort((a,b) => {
+    const da = (a.open_datetime || a.date || '').replace(/\./g,'-');
+    const db = (b.open_datetime || b.date || '').replace(/\./g,'-');
+    return da.localeCompare(db);
+  });
   let streak = 0;
-  if (sorted.length) {
-    const last = sorted[sorted.length-1].result;
-    for (let i = sorted.length - 1; i >= 0; i--) {
-      if (sorted[i].result === last) streak++;
+  if (sortedS.length) {
+    const lastPnl = parseFloat(sortedS[sortedS.length-1].profit_loss||0);
+    const isWin = lastPnl > 0;
+    for (let i = sortedS.length - 1; i >= 0; i--) {
+      const pnl = parseFloat(sortedS[i].profit_loss||0);
+      if (isWin ? pnl > 0 : pnl <= 0) streak++;
       else break;
     }
-    if (last !== 'Win') streak = -streak;
+    if (!isWin) streak = -streak;
   }
   return { net, wins: wins.length, losses: losses.length, be: trades.length - wins.length - losses.length, total: trades.length, wr, pf, rrr, exp, best, worst, gw, gl, aw, al, streak };
 }
@@ -78,11 +86,15 @@ function fmtPct(n) { return n.toFixed(1) + '%'; }
 
 // Trade dedup key
 function tradeKey(t) {
-  const pnl = Math.round(parseFloat(String(t.profit_loss||0))||0);
+  // FIX: use 2-decimal precision instead of integer rounding — prevents false duplicates
+  // for small trades (e.g. -$1.24 and -$1.00 rounding to same key)
+  const pnl = parseFloat(parseFloat(String(t.profit_loss||0)).toFixed(2));
   const dir = String(t.direction||'').trim().toLowerCase().slice(0,4);
   const inst = String(t.instrument||'').trim().toLowerCase().replace(/\s+/g,'');
   const date = String(t.date||'').trim().slice(0,10);
-  return date + '|' + inst + '|' + dir + '|' + pnl;
+  // Include open_datetime in key when available for extra uniqueness
+  const dt = String(t.open_datetime||'').trim().slice(11,19); // HH:MM:SS part
+  return date + '|' + inst + '|' + dir + '|' + pnl + (dt ? '|' + dt : '');
 }
 
 // Load from Supabase
@@ -90,7 +102,12 @@ async function loadTradesFromSupabase() {
   if (!currentUser) return;
   const { data, error } = await sb.from('trades').select('*').eq('user_id', currentUser.id).order('date', { ascending: true });
   if (error) { console.error('loadTrades:', error); return; }
-  allTrades = data || [];
+  // FIX: re-derive result from profit_loss on every load so legacy records
+  // (imported before the commission+swap fix) are corrected automatically in-memory
+  allTrades = (data || []).map(t => {
+    const pnl = parseFloat(t.profit_loss || 0);
+    return { ...t, result: pnl > 0 ? 'Win' : pnl < 0 ? 'Loss' : 'Break Even' };
+  });
 }
 
 // Delete trade

@@ -13,21 +13,57 @@ function parseMT5Html(html) {
     const n = cells.length;
     if (!cells[0] || !/^\d{4}\.\d{2}\.\d{2}/.test(cells[0])) return;
     if (n === 14) {
+      // Positions section layout:
+      // [0]OpenTime [1]PositionID [2]Symbol [3]Type [4]empty [5]Volume
+      // [6]OpenPrice [7]SL [8]TP [9]CloseTime [10]ClosePrice [11]Commission [12]Swap [13]Profit
       const dir = cells[3].toLowerCase().trim();
       if (dir !== 'buy' && dir !== 'sell') return;
       const entry = cleanNum(cells[6]);
       if (!entry) return;
       if (!/^\d{4}\.\d{2}\.\d{2}/.test(cells[9])) return;
-      const pnl = cleanNum(cells[13]);
-      fmt_a.push({ date: cells[0].slice(0,10).replace(/\./g,'-'), instrument: cells[2]||'Unknown', direction: dir.charAt(0).toUpperCase()+dir.slice(1), entry_price: entry, exit_price: cleanNum(cells[10]), profit_loss: pnl, result: pnl>0?'Win':pnl<0?'Loss':'Break Even' });
+      // FIX: net PnL = profit + commission + swap (all fees included)
+      const rawProfit = cleanNum(cells[13]);
+      const commission = cleanNum(cells[11]);
+      const swap = cleanNum(cells[12]);
+      const netPnl = rawProfit + commission + swap;
+      // FIX: store full open datetime for correct chronological sorting
+      const openDatetime = cells[0]; // e.g. "2026.03.02 21:37:02"
+      fmt_a.push({
+        date: cells[0].slice(0,10).replace(/\./g,'-'),
+        open_datetime: openDatetime,
+        instrument: cells[2]||'Unknown',
+        direction: dir.charAt(0).toUpperCase()+dir.slice(1),
+        entry_price: entry,
+        exit_price: cleanNum(cells[10]),
+        profit_loss: netPnl,
+        // FIX: classify result using net PnL, not raw profit
+        result: netPnl > 0 ? 'Win' : netPnl < 0 ? 'Loss' : 'Break Even'
+      });
     } else if (n === 15 && cells[4] === 'out' && cells[2]) {
+      // Deals section layout (out deals):
+      // [0]Time [1]DealID [2]Symbol [3]Type [4]Direction [5]Volume [6]Price
+      // [7]OrderID [8]Commission [9]Fee [10]Swap [11]Profit [12]Balance [13]=next...
+      // FIX: cells[11] is the per-deal Profit (not cells[12] which is Balance)
       const dir = cells[3].toLowerCase().trim();
       if (dir !== 'buy' && dir !== 'sell') return;
-      const pnl = cleanNum(cells[12]);
+      const rawProfit = cleanNum(cells[11]);
+      const commission = cleanNum(cells[8]);
+      const swap = cleanNum(cells[10]);
+      const netPnl = rawProfit + commission + swap;
       const price = cleanNum(cells[6]);
-      fmt_b.push({ date: cells[0].slice(0,10).replace(/\./g,'-'), instrument: cells[2]||'Unknown', direction: dir==='sell'?'Sell':'Buy', entry_price: price, exit_price: price, profit_loss: pnl, result: pnl>0?'Win':pnl<0?'Loss':'Break Even' });
+      fmt_b.push({
+        date: cells[0].slice(0,10).replace(/\./g,'-'),
+        open_datetime: cells[0],
+        instrument: cells[2]||'Unknown',
+        direction: dir==='sell'?'Sell':'Buy',
+        entry_price: price,
+        exit_price: price,
+        profit_loss: netPnl,
+        result: netPnl > 0 ? 'Win' : netPnl < 0 ? 'Loss' : 'Break Even'
+      });
     }
   });
+  // Prefer Positions section (fmt_a) as it has matched open+close per trade
   return fmt_a.length > 0 ? fmt_a : fmt_b;
 }
 
@@ -206,17 +242,24 @@ async function saveTradesToDB(trades, firmName) {
   const newTrades = trades.filter(t => !existingKeys.has(tradeKey(t)));
   const dupes = trades.length - newTrades.length;
   if (!newTrades.length) return { saved: 0, dupes };
-  const batch = newTrades.map(t => ({
-    user_id: currentUser.id,
-    account_provider: firmName,
-    date: String(t.date||'').trim(),
-    instrument: String(t.instrument||'Unknown').trim(),
-    direction: String(t.direction||'—').trim(),
-    entry_price: parseFloat(t.entry_price)||0,
-    exit_price: parseFloat(t.exit_price)||0,
-    profit_loss: parseFloat(t.profit_loss)||0,
-    result: String(t.result||'').trim() || ((parseFloat(t.profit_loss)||0) > 0 ? 'Win' : (parseFloat(t.profit_loss)||0) < 0 ? 'Loss' : 'Break Even')
-  }));
+  const batch = newTrades.map(t => {
+    // FIX: profit_loss already includes commission+swap from parser — use it as-is
+    const netPnl = parseFloat(t.profit_loss)||0;
+    return {
+      user_id: currentUser.id,
+      account_provider: firmName,
+      date: String(t.date||'').trim(),
+      // FIX: store full open datetime so equity curve sorts intra-day trades correctly
+      open_datetime: String(t.open_datetime || t.date || '').trim(),
+      instrument: String(t.instrument||'Unknown').trim(),
+      direction: String(t.direction||'—').trim(),
+      entry_price: parseFloat(t.entry_price)||0,
+      exit_price: parseFloat(t.exit_price)||0,
+      profit_loss: netPnl,
+      // FIX: always derive result from net PnL — never trust stale string
+      result: netPnl > 0 ? 'Win' : netPnl < 0 ? 'Loss' : 'Break Even'
+    };
+  });
   let saved = 0;
   for (let i = 0; i < batch.length; i += 50) {
     const chunk = batch.slice(i, i + 50);
