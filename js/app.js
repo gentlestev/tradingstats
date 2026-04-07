@@ -22,7 +22,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   sb.auth.onAuthStateChange((event, session) => {
     if (event === 'SIGNED_IN' && session) onLogin(session.user);
-    if (event === 'SIGNED_OUT') onLogout();
+    if (event === 'TOKEN_REFRESHED' && session) { currentUser = session.user; }
+    // FIX: when Supabase can't refresh the token (e.g. after browser tracking-prevention
+    // clears storage), sign out cleanly and show the login screen instead of a 400 loop
+    if (event === 'SIGNED_OUT' || event === 'USER_DELETED') onLogout();
   });
 
   // Page zoom restore

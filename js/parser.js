@@ -235,36 +235,88 @@ async function parsePastedText(text) {
 }
 
 // Save trades to Supabase (with dedup)
+// Cache whether the open_datetime column exists in Supabase (null = not yet tested)
+let _hasOpenDatetimeCol = null;
+
+async function _ensureSession() {
+  // FIX: refresh the Supabase session before any write so a stale token does not
+  // cause a 400 / 401.  If refresh fails, sign the user out cleanly.
+  const { data, error } = await sb.auth.getSession();
+  if (error || !data?.session) {
+    // Token is unrecoverable — force a clean logout so the user sees the login screen
+    await sb.auth.signOut().catch(() => {});
+    onLogout();
+    return false;
+  }
+  currentUser = data.session.user;
+  return true;
+}
+
+async function _probeOpenDatetimeCol() {
+  // Try to select the column — if the response contains an error mentioning the column
+  // we know it has not been added to the Supabase table yet.
+  if (_hasOpenDatetimeCol !== null) return _hasOpenDatetimeCol;
+  try {
+    const { error } = await sb.from('trades').select('open_datetime').limit(1);
+    _hasOpenDatetimeCol = !error || !error.message?.toLowerCase().includes('open_datetime');
+  } catch(e) {
+    _hasOpenDatetimeCol = false;
+  }
+  return _hasOpenDatetimeCol;
+}
+
 async function saveTradesToDB(trades, firmName) {
   if (!trades.length || !currentUser) return { saved: 0, dupes: 0 };
+
+  // FIX: refresh session before writing — prevents the 400 "Invalid Refresh Token" error
+  const ok = await _ensureSession();
+  if (!ok) { showToast('Session expired — please sign in again.', 'error'); return { saved: 0, dupes: 0 }; }
+
+  // FIX: detect whether open_datetime column exists in the DB
+  const hasDatetimeCol = await _probeOpenDatetimeCol();
+
   const { data: existing } = await sb.from('trades').select('date,instrument,direction,profit_loss').eq('user_id', currentUser.id);
   const existingKeys = new Set((existing||[]).map(t => tradeKey(t)));
   const newTrades = trades.filter(t => !existingKeys.has(tradeKey(t)));
   const dupes = trades.length - newTrades.length;
   if (!newTrades.length) return { saved: 0, dupes };
+
   const batch = newTrades.map(t => {
-    // FIX: profit_loss already includes commission+swap from parser — use it as-is
     const netPnl = parseFloat(t.profit_loss)||0;
-    return {
+    const record = {
       user_id: currentUser.id,
       account_provider: firmName,
       date: String(t.date||'').trim(),
-      // FIX: store full open datetime so equity curve sorts intra-day trades correctly
-      open_datetime: String(t.open_datetime || t.date || '').trim(),
       instrument: String(t.instrument||'Unknown').trim(),
       direction: String(t.direction||'—').trim(),
       entry_price: parseFloat(t.entry_price)||0,
       exit_price: parseFloat(t.exit_price)||0,
       profit_loss: netPnl,
-      // FIX: always derive result from net PnL — never trust stale string
       result: netPnl > 0 ? 'Win' : netPnl < 0 ? 'Loss' : 'Break Even'
     };
+    // FIX: only include open_datetime if the column exists — avoids 400 Bad Request
+    // when the column has not yet been added to the Supabase trades table
+    if (hasDatetimeCol) {
+      record.open_datetime = String(t.open_datetime || t.date || '').trim();
+    }
+    return record;
   });
+
   let saved = 0;
   for (let i = 0; i < batch.length; i += 50) {
     const chunk = batch.slice(i, i + 50);
     const { error } = await sb.from('trades').insert(chunk);
-    if (!error) saved += chunk.length;
+    if (error) {
+      // If insert fails with an unknown column error, disable the column and retry once
+      if (error.message?.toLowerCase().includes('open_datetime')) {
+        _hasOpenDatetimeCol = false;
+        const fallback = chunk.map(r => { const c = {...r}; delete c.open_datetime; return c; });
+        const { error: e2 } = await sb.from('trades').insert(fallback);
+        if (!e2) saved += fallback.length;
+      }
+    } else {
+      saved += chunk.length;
+    }
   }
   return { saved, dupes };
 }

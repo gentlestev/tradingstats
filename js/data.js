@@ -100,6 +100,13 @@ function tradeKey(t) {
 // Load from Supabase
 async function loadTradesFromSupabase() {
   if (!currentUser) return;
+  // FIX: always refresh the session before reading so a stale/expired token doesn't
+  // silently fail or produce a 400 — if unrecoverable, sign out cleanly
+  try {
+    const { data: sd, error: se } = await sb.auth.getSession();
+    if (se || !sd?.session) { await sb.auth.signOut().catch(()=>{}); onLogout(); return; }
+    currentUser = sd.session.user;
+  } catch(e) { return; }
   const { data, error } = await sb.from('trades').select('*').eq('user_id', currentUser.id).order('date', { ascending: true });
   if (error) { console.error('loadTrades:', error); return; }
   // FIX: re-derive result from profit_loss on every load so legacy records
